@@ -2,6 +2,6 @@ Recaptcha site key: 6LdG2tUqAAAAAMvRVEg0dJ7_PCbqwsTm0deZDTeN
 Recaptcha secret key: 6LdG2tUqAAAAAKgU0Znpa2dwT2Ol3bMN0LPiB163
 
  "ConnectionStrings": {
-    "DevConnection": "Server=DESKTOP-Q6SN24Q,1433;Database=AuthDb;User Id=ccadmin;Password=ccadmin;Trusted_Connection=False;MultipleActiveResultSets=true;TrustServerCertificate=True;",
-    "StagingConnection": "Data Source=tcp:10.3.3.11;Database=AuthDb;User Id=ccadmin;Password=ccadmin;Trusted_Connection=False;MultipleActiveResultSets=true;TrustServerCertificate=True;"
+    "DevConnection": "Server=DESKTOP-Q6SN24Q,1433;Database=CompAuthDb;User Id=ccadmin;Password=ccadmin;Trusted_Connection=False;MultipleActiveResultSets=true;TrustServerCertificate=True;",
+    "StagingConnection": "Data Source=tcp:10.3.3.11;Database=CompAuthDb;User Id=ccadmin;Password=ccadmin;Trusted_Connection=False;MultipleActiveResultSets=true;TrustServerCertificate=True;"
   },

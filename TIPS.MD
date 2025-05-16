@@ -1,26 +1,26 @@
 Migrations:
 
-1. go to AuthApi project directory
+1. go to CompAuthApi project directory
    Execute: ./migrate.sh
 
    OR
 
-2. dotnet ef --project ../AuthApi.Data/AuthApi.Data.csproj database drop
-3. dotnet ef --project ../AuthApi.Data/AuthApi.Data.csproj migrations remove
-4. dotnet ef --project ../AuthApi.Data/AuthApi.Data.csproj migrations add InitialCreate
-5. dotnet ef --project ../AuthApi.Data/AuthApi.Data.csproj database update
-6. From AuthApi root project run "dotnet run seeddata"
+2. dotnet ef --project ../CompAuthApi.Data/CompAuthApi.Data.csproj database drop
+3. dotnet ef --project ../CompAuthApi.Data/CompAuthApi.Data.csproj migrations remove
+4. dotnet ef --project ../CompAuthApi.Data/CompAuthApi.Data.csproj migrations add InitialCreate
+5. dotnet ef --project ../CompAuthApi.Data/CompAuthApi.Data.csproj database update
+6. From CompAuthApi root project run "dotnet run seeddata"
 
 Common Errors
 The Body inferred error: means some services are not registered in the dependency injection class under Startup folder
-project AuthApi.Core specifically either in RegisterServices or in RegisterValidators
+project CompAuthApi.Core specifically either in RegisterServices or in RegisterValidators
 Sometimes the fronend stop working and data stop being returned by the server. Check The Token validity. Logout and then login to solve the problem. Do not tear your hair
 
 Publish to IIS
 dotnet publish --configuration Release
-Then copy the content under the below publish folder to IIS AuthApi folder
-AuthApi -> /Users/ismatayash/Projects/ContactCenter/AuthApiProjects/AuthApi/bin/Release/net7.0/publish/
-The folder Attachments must exist on the AuthApi folder on IIS and Modify permission should be given to it for the IISUSERS user
+Then copy the content under the below publish folder to IIS CompAuthApi folder
+CompAuthApi -> /Users/ismatayash/Projects/ContactCenter/CompAuthApiProjects/CompAuthApi/bin/Release/net7.0/publish/
+The folder Attachments must exist on the CompAuthApi folder on IIS and Modify permission should be given to it for the IISUSERS user
 
 Logs
 Log file logged daily and saved on the server under C:/Auth/logs delete from time to time
