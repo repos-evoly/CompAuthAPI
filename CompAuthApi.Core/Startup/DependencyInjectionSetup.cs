@@ -70,10 +70,14 @@ namespace CompAuthApi.Core.Startup
                     builder =>
                     {
                       builder.WithOrigins("http://localhost:3000",
-                                          "http://localhost:3010",
-                                          "http://10.3.3.11:3010",
+                                          "http://localhost:3012",
+                                          "http://10.3.3.11:3012",
+                                          "http://10.3.3.11:3013",
+                                          "http://localhost:3012",
+                                          "http://10.3.3.11:3012",
                                           "http://localhost:5000",
-                                          "http://10.1.1.205:3010")
+                                          "http://10.1.1.205:3012",
+                                          "http://10.1.1.205:3013")
                              .AllowAnyHeader()
                              .AllowAnyMethod()
                              .AllowCredentials();

@@ -83,7 +83,7 @@ namespace CompAuthApi.Endpoints
               u.Username == dto.Login);
 
             if (user == null || !BCrypt.Net.BCrypt.Verify(dto.Password, user.Password))
-            return TypedResults.Json(new { Message = "Invalid username or password." }, statusCode: StatusCodes.Status401Unauthorized);
+                return TypedResults.Json(new { Message = "Invalid username or password." }, statusCode: StatusCodes.Status401Unauthorized);
             var settings = await db.Settings.FirstOrDefaultAsync();
             bool isGlobal2FAEnabled = settings?.IsTwoFactorAuthEnabled ?? false;
 
@@ -148,8 +148,11 @@ namespace CompAuthApi.Endpoints
              IQrCodeRepository qrCodeRepository,
              EnableTwoFactorDto dto)
         {
-            var user = await db.Users.Include(u => u.UserSecurity)
-                .FirstOrDefaultAsync(u => u.Email == dto.Email);
+            var user = await db.Users
+     .Include(u => u.UserSecurity)
+     .FirstOrDefaultAsync(u =>
+         u.Email == dto.Login
+      || u.Username == dto.Login);
 
             if (user == null) return TypedResults.NotFound("User not found.");
 
@@ -192,8 +195,11 @@ namespace CompAuthApi.Endpoints
             HttpContext httpContext,
             VerifyTwoFactorDto dto)
         {
-            var user = await db.Users.Include(u => u.UserSecurity)
-                .FirstOrDefaultAsync(u => u.Email == dto.Email);
+            var user = await db.Users
+     .Include(u => u.UserSecurity)
+     .FirstOrDefaultAsync(u =>
+         u.Email == dto.Login
+      || u.Username == dto.Login);
 
             if (user == null || user.UserSecurity == null)
                 return TypedResults.BadRequest("User not found or 2FA not enabled.");
@@ -235,8 +241,11 @@ namespace CompAuthApi.Endpoints
             HttpContext httpContext,
             VerifyTwoFactorDto dto)
         {
-            var user = await db.Users.Include(u => u.UserSecurity)
-                                    .FirstOrDefaultAsync(u => u.Email == dto.Email);
+            var user = await db.Users
+    .Include(u => u.UserSecurity)
+    .FirstOrDefaultAsync(u =>
+        u.Email == dto.Login
+     || u.Username == dto.Login);
 
             if (user == null || user.UserSecurity?.IsTwoFactorEnabled != true)
                 return TypedResults.BadRequest("2FA is not enabled for this user.");
