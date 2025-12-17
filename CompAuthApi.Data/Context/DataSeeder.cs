@@ -33,10 +33,10 @@ namespace CompAuthApi.Data.Seeding
                 {
                     new() { TitleLT = "SuperAdmin"     }, // full system control
                     new() { TitleLT = "Admin"          }, // manage companies & settings
-                    new() { TitleLT = "Support"        }, // monitor & troubleshoot
-                    new() { TitleLT = "Auditor"        }, // compliance & read-only
-                    new() { TitleLT = "CompanyManager" }, // top-level company authority
-                    new() { TitleLT = "Accountant"     }, // financial operator
+                    new() { TitleLT = "CompanyManager"        }, // monitor & troubleshoot
+                    new() { TitleLT = "CompanyUser"        }, // compliance & read-only
+                    new() { TitleLT = "CompanyAccountant" }, // top-level company authority
+                    new() { TitleLT = "CompanyAuditor"     }, // financial operator
                     new() { TitleLT = "Maker"          }, // initiates transfers / requests
                     new() { TitleLT = "Checker"        }, // approves transfers / requests
                     new() { TitleLT = "Viewer"         }  // read-only company access
@@ -58,7 +58,7 @@ namespace CompAuthApi.Data.Seeding
                 var adminUser = new User
                 {
                     Email = "admin@example.com",
-                    Password = BCrypt.Net.BCrypt.HashPassword("Admin@123"), // Hash the password
+                    Password = BCrypt.Net.BCrypt.HashPassword("123"), // Hash the password
                     Active = true,
                     RoleId = adminRole,
                     UserSecurity = new UserSecurity()

@@ -3,6 +3,7 @@ using CompAuthApi.Data.Seeding;
 using CompAuthApi.Extensions;
 
 
+
 var builder = WebApplication.CreateBuilder(args);
 builder.RegisterServices();
 builder.Logging.ClearProviders();
@@ -21,8 +22,10 @@ app.ConfigureExceptionHandler();
 app.ConfigureStaticFiles();
 
 app.UseCors("AllowSpecificOrigins");
-app.UseAuthorization();
 app.UseAuthentication();
+app.UseAuthorization();
+
+app.UseAlways200ResponseWrapper();
 
 app.RegisterEndpoints();
 

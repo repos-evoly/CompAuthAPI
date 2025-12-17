@@ -9,3 +9,13 @@ namespace CompAuthApi.Core.Dtos
         public string? Email { get; set; }
     }
 }
+
+
+namespace CompAuthApi.Core.Dtos
+{
+    public class CustomerForgotPasswordDto
+    {
+        [Required, EmailAddress]
+        public string Email { get; set; } = null!;
+    }
+}

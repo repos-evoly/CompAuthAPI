@@ -13,6 +13,11 @@ using CompAuthApi.Data.Models;
 using CompAuthApi.Core.Dtos;
 using CompAuthApi.Abstractions;
 using CompAuthApi.Core.Abstractions;
+using System.Net;
+using MailKit.Security;
+using MimeKit;
+using MimeKit.Utils;
+using MailKit.Net.Smtp;
 
 namespace CompAuthApi.Endpoints
 {
@@ -26,6 +31,7 @@ namespace CompAuthApi.Endpoints
             auth.MapPost("/enable-2fa", EnableTwoFactorAuthentication);
             auth.MapPost("/verify-2fa", VerifyTwoFactorAuthentication);
             auth.MapPost("/forgot-password", ForgotPassword);
+            auth.MapPost("/customer-forgot-password", CustomerForgotPassword);
             auth.MapPost("/reset-password", ResetPassword);
             auth.MapPost("/refresh-token", RefreshToken);
             auth.MapPost("/verify-initial-2fa", VerifyInitialTwoFactorSetup);
@@ -34,8 +40,8 @@ namespace CompAuthApi.Endpoints
 
         /// <summary> User Registration </summary>
         public static async Task<IResult> Register(
-    CompAuthApiDbContext db,
-    RegisterDto dto)
+            CompAuthApiDbContext db,
+            RegisterDto dto)
         {
             // Check username OR email already taken:
             if (await db.Users.AnyAsync(u => u.Username == dto.Username))
@@ -76,9 +82,9 @@ namespace CompAuthApi.Endpoints
                 return TypedResults.NotFound("Invalid Credentials!");
 
             var user = await db.Users
-          .Include(u => u.UserSecurity)
-          .Include(u => u.Role)
-          .FirstOrDefaultAsync(u =>
+            .Include(u => u.UserSecurity)
+            .Include(u => u.Role)
+            .FirstOrDefaultAsync(u =>
               u.Email == dto.Login ||
               u.Username == dto.Login);
 
@@ -97,12 +103,9 @@ namespace CompAuthApi.Endpoints
 
                 return TypedResults.Ok(new { RequiresTwoFactor = true });
             }
-
-
             var accessToken = GenerateJwtTokenForCompAuthApi(user, config);
             var kycToken = GenerateJwtTokenForKycApi(user, config);
             var refreshToken = GenerateRefreshToken();
-
 
             user.UserSecurity ??= new UserSecurity { UserId = user.Id };
             user.UserSecurity.LastLogin = DateTimeOffset.Now;
@@ -115,8 +118,8 @@ namespace CompAuthApi.Endpoints
             httpContext.Response.Cookies.Append("accessToken", accessToken,
             new CookieOptions
             {
-                Expires = DateTime.Now.AddDays(7),
-                HttpOnly = true,
+                Expires = DateTime.Now.AddMinutes(180),
+                HttpOnly = false,
                 Secure = true,
                 SameSite = SameSiteMode.None
             });
@@ -124,7 +127,7 @@ namespace CompAuthApi.Endpoints
            new CookieOptions
            {
                Expires = DateTime.Now.AddDays(7),
-               HttpOnly = true,
+               HttpOnly = false,
                Secure = true,
                SameSite = SameSiteMode.None
            });
@@ -136,11 +139,6 @@ namespace CompAuthApi.Endpoints
                 KycToken = kycToken
             });
         }
-
-
-
-
-
         /// <summary> Enable Google Authenticator 2FA </summary>
         /// <summary> Enable Google Authenticator 2FA and save QR code </summary>
         public static async Task<IResult> EnableTwoFactorAuthentication(
@@ -196,10 +194,11 @@ namespace CompAuthApi.Endpoints
             VerifyTwoFactorDto dto)
         {
             var user = await db.Users
-     .Include(u => u.UserSecurity)
-     .FirstOrDefaultAsync(u =>
-         u.Email == dto.Login
-      || u.Username == dto.Login);
+            .Include(u => u.UserSecurity)
+            .Include(u => u.Role)
+            .FirstOrDefaultAsync(u =>
+                u.Email == dto.Login
+            || u.Username == dto.Login);
 
             if (user == null || user.UserSecurity == null)
                 return TypedResults.BadRequest("User not found or 2FA not enabled.");
@@ -242,10 +241,11 @@ namespace CompAuthApi.Endpoints
             VerifyTwoFactorDto dto)
         {
             var user = await db.Users
-    .Include(u => u.UserSecurity)
-    .FirstOrDefaultAsync(u =>
-        u.Email == dto.Login
-     || u.Username == dto.Login);
+                .Include(u => u.UserSecurity)
+                .Include(u => u.Role)
+                .FirstOrDefaultAsync(u =>
+                    u.Email == dto.Login
+                || u.Username == dto.Login);
 
             if (user == null || user.UserSecurity?.IsTwoFactorEnabled != true)
                 return TypedResults.BadRequest("2FA is not enabled for this user.");
@@ -285,13 +285,110 @@ namespace CompAuthApi.Endpoints
 
             user.UserSecurity ??= new UserSecurity { UserId = user.Id };
             user.UserSecurity.PasswordResetToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(4));
-            user.UserSecurity.PasswordResetTokenExpiry = DateTime.Now.AddMinutes(30);
+            user.UserSecurity.PasswordResetTokenExpiry = DateTime.Now.AddMinutes(300);
 
             await db.SaveChangesAsync();
 
             return TypedResults.Ok("Password reset token sent.");
         }
 
+
+        public static async Task<IResult> CustomerForgotPassword(
+          CompAuthApiDbContext db,
+          [FromBody] ForgotPasswordDto dto)
+        {
+            // 1) Look-up user
+            var user = await db.Users
+                               .Include(u => u.UserSecurity)
+                               .FirstOrDefaultAsync(u => u.Email == dto.Email);
+
+            if (user is null)
+                return TypedResults.NotFound(new { message = "User not found." });
+
+            // 2) Ensure UserSecurity row exists
+            user.UserSecurity ??= new UserSecurity { UserId = user.Id };
+
+            // 3) Generate reset token
+            user.UserSecurity.PasswordResetToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(4));
+            user.UserSecurity.PasswordResetTokenExpiry = DateTime.UtcNow.AddMinutes(300);
+            await db.SaveChangesAsync();
+
+            // 4) Build the e-mail body
+            var resetBody = $"""
+            Hi {user.Username},
+
+            You (or someone pretending to be you) requested a password reset.
+            Your reset code is: {user.UserSecurity.PasswordResetToken}
+
+            This code will expire in 30 minutes.
+
+            If you did not request this, please ignore this e-mail.
+
+            — CompaniesGateway
+            """;
+
+            // 5) Create the MimeMessage
+            var message = new MimeMessage();
+            message.From.Add(new MailboxAddress("Companies Gateway", "OTP.info@bcd.ly"));
+            message.To.Add(MailboxAddress.Parse(dto.Email));
+            message.Subject = "Your password reset code";
+            message.Date = DateTimeOffset.UtcNow;
+            message.MessageId = MimeUtils.GenerateMessageId("bcd.ly");
+            message.Body = new TextPart("plain") { Text = resetBody };
+
+            // 6) Hard-coded SMTP settings (MailKit)
+            const string smtpHost = "d303874.o.ess.barracudanetworks.com";
+            const int smtpPort = 25;
+            const bool useStartTls = true;
+            const string smtpUser = "comp.info@bcd.ly";
+            const string smtpPassword = "";  // <-- fill in if you have one
+
+            bool sent = false;
+            using var smtp = new SmtpClient { Timeout = 10_000 };
+
+            try
+            {
+                // Connect (with or without STARTTLS)
+                await smtp.ConnectAsync(
+                    smtpHost,
+                    smtpPort,
+                    useStartTls
+                      ? SecureSocketOptions.StartTls
+                      : SecureSocketOptions.None
+                );
+
+                // Authenticate only if we have credentials
+                if (!string.IsNullOrWhiteSpace(smtpPassword))
+                    await smtp.AuthenticateAsync(smtpUser, smtpPassword);
+
+                // Send the message
+                await smtp.SendAsync(message);
+                sent = true;
+            }
+            catch (Exception ex)
+            {
+                // Any failure before here means the message was not sent
+                return TypedResults.Ok(new
+                {
+                    message = "Failed to send reset e-mail.",
+                    detail = ex.Message
+                });
+            }
+            finally
+            {
+                // Always attempt to disconnect, but swallow any errors here
+                try
+                {
+                    await smtp.DisconnectAsync(true);
+                }
+                catch { }
+            }
+
+            // Return success if SendAsync succeeded
+            return sent
+                ? TypedResults.Ok(new { message = "Reset code sent to your e-mail." })
+                : TypedResults.Ok(new { message = "Unknown error sending reset e-mail." });
+        }
         /// <summary> Reset Password </summary>
         public static async Task<IResult> ResetPassword(CompAuthApiDbContext db, ResetPasswordDto dto)
         {
@@ -334,6 +431,16 @@ namespace CompAuthApi.Endpoints
             user.UserSecurity.LastLogout = DateTimeOffset.Now;
             await db.SaveChangesAsync();
 
+            // Remove auth cookies set during login
+            var cookieOptions = new CookieOptions
+            {
+                Path = "/",
+                Secure = true,
+                SameSite = SameSiteMode.None
+            };
+            httpContext.Response.Cookies.Delete("accessToken", cookieOptions);
+            httpContext.Response.Cookies.Delete("refreshToken", cookieOptions);
+
             return TypedResults.Ok("Logged out successfully.");
         }
 
@@ -348,17 +455,17 @@ namespace CompAuthApi.Endpoints
 
             var claims = new[]
             {
-        new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-        new Claim(ClaimTypes.Email, user.Email),
-        new Claim(ClaimTypes.Role, user.Role?.TitleLT ?? "Unassigned"),
-        new Claim(ClaimTypes.GroupSid, user.BranchId ?? ""),
-        new Claim(ClaimTypes.Sid, user.Id.ToString())
-    };
+                new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+                new Claim(ClaimTypes.Email, user.Email),
+                new Claim(ClaimTypes.Role, user.Role?.TitleLT ?? "Unassigned"),
+                new Claim(ClaimTypes.GroupSid, user.BranchId ?? ""),
+                new Claim(ClaimTypes.Sid, user.Id.ToString())
+            };
 
             var tokenDescriptor = new SecurityTokenDescriptor
             {
                 Subject = new ClaimsIdentity(claims),
-                Expires = DateTime.Now.AddDays(7),
+                Expires = DateTime.Now.AddMinutes(180),
                 Issuer = jwtSection["Issuer"],
                 Audience = jwtSection["Audience"],
                 SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
@@ -396,7 +503,7 @@ namespace CompAuthApi.Endpoints
             var tokenDescriptor = new SecurityTokenDescriptor
             {
                 Subject = new ClaimsIdentity(claims),
-                Expires = DateTime.Now.AddDays(7),
+                Expires = DateTime.Now.AddHours(1),
                 Issuer = jwtSection["Issuer"],
                 Audience = jwtSection["Audience"],
                 SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
@@ -406,15 +513,20 @@ namespace CompAuthApi.Endpoints
             return tokenHandler.WriteToken(token);
         }
 
-
-        public static async Task<IResult> RefreshToken(CompAuthApiDbContext db, IConfiguration config, HttpContext httpContext)
+        public static async Task<IResult> RefreshToken(
+            CompAuthApiDbContext db,
+            IConfiguration config,
+            [FromBody] RefreshTokenRequestDto dto)
         {
-            if (!httpContext.Request.Cookies.TryGetValue("refreshToken", out var refreshToken))
-                return TypedResults.BadRequest("Refresh token is missing");
+            if (dto is null || string.IsNullOrWhiteSpace(dto.RefreshToken))
+                return TypedResults.BadRequest("Refresh token is missing.");
 
-            var user = await db.Users.Include(u => u.UserSecurity)
-                .FirstOrDefaultAsync(u => u.UserSecurity!.RefreshToken == refreshToken &&
-                                        u.UserSecurity.RefreshTokenExpiry > DateTime.Now);
+            var user = await db.Users
+                .Include(u => u.UserSecurity)
+                .Include(u => u.Role) // <-- IMPORTANT: load role so claims are populated
+                .FirstOrDefaultAsync(u =>
+                    u.UserSecurity!.RefreshToken == dto.RefreshToken &&
+                    u.UserSecurity.RefreshTokenExpiry > DateTime.UtcNow);
 
             if (user == null)
                 return TypedResults.Unauthorized();
@@ -423,35 +535,20 @@ namespace CompAuthApi.Endpoints
             var newRefreshToken = GenerateRefreshToken();
 
             user.UserSecurity.RefreshToken = newRefreshToken;
-            user.UserSecurity.RefreshTokenExpiry = DateTime.Now.AddDays(7);
+            user.UserSecurity.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
             await db.SaveChangesAsync();
 
-            httpContext.Response.Cookies.Append("authToken", newAccessToken, new CookieOptions
+            // no cookies here; front-end stores them
+            return TypedResults.Ok(new
             {
-                Expires = DateTime.Now.AddMinutes(30),
-                HttpOnly = true,
-                Secure = true,
-                SameSite = SameSiteMode.None
+                AccessToken = newAccessToken,
+                RefreshToken = newRefreshToken
             });
-
-            httpContext.Response.Cookies.Append("refreshToken", newRefreshToken, new CookieOptions
-            {
-                Expires = DateTime.Now.AddDays(7),
-                HttpOnly = true,
-                Secure = true,
-                SameSite = SameSiteMode.None
-            });
-
-            return TypedResults.Ok(new { AccessToken = newAccessToken, RefreshToken = newRefreshToken });
         }
-
-
-
         private static bool VerifyOtp(string otp, string secretKey)
         {
             try
             {
-
                 byte[] keyBytes = Base32Encoding.ToBytes(secretKey);
 
                 var totp = new Totp(keyBytes, step: 30, totpSize: 6, mode: OtpHashMode.Sha1);
@@ -499,8 +596,6 @@ namespace CompAuthApi.Endpoints
                 : TypedResults.NotFound("No settings found.");
         }
 
-
-
         private static string GenerateRefreshToken()
         {
             var randomNumber = new byte[32];
@@ -508,8 +603,6 @@ namespace CompAuthApi.Endpoints
             rng.GetBytes(randomNumber);
             return Convert.ToBase64String(randomNumber);
         }
-
-
 
     }
 }

@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CompAuthApi.Data.Migrations
 {
     [DbContext(typeof(CompAuthApiDbContext))]
-    [Migration("20250505064105_InitialCreate")]
+    [Migration("20251001092215_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />

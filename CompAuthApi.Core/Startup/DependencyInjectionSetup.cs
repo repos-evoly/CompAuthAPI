@@ -1,3 +1,4 @@
+using System;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -17,6 +18,7 @@ using Microsoft.AspNetCore.Builder;
 using CompAuthApi.Core.Abstractions;
 using Microsoft.Extensions.Hosting;
 using CompAuthApi.Data.Seeding;
+using CompAuthApi.Data.Repositories;
 
 namespace CompAuthApi.Core.Startup
 {
@@ -33,18 +35,27 @@ namespace CompAuthApi.Core.Startup
       builder.Services.RegisterAuths(issuer, audience, jwtKey);
       if (builder.Environment.IsDevelopment())
       {
-        builder.Services.AddDbContext<CompAuthApiDbContext>(opt => opt.UseSqlServer(builder.Configuration["ConnectionStrings:DevConnection"]));
+        builder.Services.AddDbContext<CompAuthApiDbContext>(opt =>
+            opt.UseSqlServer(
+              builder.Configuration["ConnectionStrings:DevConnection"],
+              x => x.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null)
+            ));
       }
       else if (builder.Environment.IsStaging())
       {
-        builder.Services.AddDbContext<CompAuthApiDbContext>(opt => opt.UseSqlServer(builder.Configuration["ConnectionStrings:StagingConnection"]));
+        builder.Services.AddDbContext<CompAuthApiDbContext>(opt =>
+            opt.UseSqlServer(
+              builder.Configuration["ConnectionStrings:StagingConnection"],
+              x => x.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null)
+            ));
       }
       else
       {
         builder.Services.AddDbContext<CompAuthApiDbContext>(opt =>
-        {
-          opt.UseSqlServer(builder.Configuration["ConnectionStrings:ProdConnection"]);
-        });
+            opt.UseSqlServer(
+              builder.Configuration["ConnectionStrings:ProdConnection"],
+              x => x.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null)
+            ));
       }
       builder.Services.AddHttpContextAccessor();
       builder.Services.AddTransient<DataSeeder>();
@@ -69,14 +80,27 @@ namespace CompAuthApi.Core.Startup
               options.AddPolicy("AllowSpecificOrigins",
                     builder =>
                     {
-                      builder.WithOrigins("http://localhost:3000",
+                      builder.WithOrigins("http://localhost",
+                                          "http://10.3.3.11",
+                                          "http://localhost:3000",
                                           "http://localhost:3012",
                                           "http://10.3.3.11:3012",
                                           "http://10.3.3.11:3013",
                                           "http://localhost:3012",
                                           "http://10.3.3.11:3012",
                                           "http://localhost:5000",
+                                          "http://10.1.1.205",
                                           "http://10.1.1.205:3012",
+                                          "http://192.168.0.245:3012",
+                                          "http://192.168.0.245:3013",
+                                          "http://192.168.113.10",
+                                          "http://192.168.113.10:3012",
+                                          "http://192.168.113.11",
+                                          "http://192.168.113.11:3012",
+                                          "http://10.1.1.205:3012",
+                                          "http://10.1.1.205:3013",
+                                          "http://localhost:3013",
+                                          "https://webanking.bcd.ly/Companygw",
                                           "http://10.1.1.205:3013")
                              .AllowAnyHeader()
                              .AllowAnyMethod()
@@ -152,9 +176,6 @@ namespace CompAuthApi.Core.Startup
 
     public static IServiceCollection RegisterValidators(this IServiceCollection validators)
     {
-
-
-
       return validators;
     }
 
@@ -163,6 +184,7 @@ namespace CompAuthApi.Core.Startup
       services.AddEndpointsApiExplorer();
       services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
       services.AddScoped<IQrCodeRepository, QrCodeRepository>();
+      services.AddScoped<IAuthRepository, AuthRepository>();
       services.AddTransient<IUnitOfWork, UnitOfWork>();
 
       return services;
