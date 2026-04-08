@@ -257,7 +257,6 @@ namespace CompAuthApi.Data.Repositories
             var resetBody = $"""
             Hi {user.Username},
 
-            You (or someone pretending to be you) requested a password reset.
             Your reset code is: {user.UserSecurity.PasswordResetToken}
 
             This code will expire in 30 minutes.
