@@ -17,6 +17,13 @@ namespace CompAuthApi.Data.Models
 
         public string? TwoFactorSecretKey { get; set; } // Nullable
         public bool IsTwoFactorEnabled { get; set; }
+
+        public int LoginAttemptCount {get; set; } = 0;
+
+        public bool IsLocked { get; set; } = false;
+
+        public DateTimeOffset? LastLock { get; set; }
+
         public string? PasswordResetToken { get; set; } // Nullable
         public DateTimeOffset? PasswordResetTokenExpiry { get; set; }
         public string? QrCodePath { get; set; } // Nullable

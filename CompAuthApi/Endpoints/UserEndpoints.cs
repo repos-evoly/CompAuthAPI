@@ -5,6 +5,8 @@ using CompAuthApi.Core.Abstractions;
 using AutoMapper;
 using CompAuthApi.Data.Models;
 using CompAuthApi.Abstractions;
+using CompAuthApi.Data.Context;
+using Microsoft.EntityFrameworkCore;
 
 namespace CompAuthApi.Endpoints
 {
@@ -39,7 +41,15 @@ namespace CompAuthApi.Endpoints
                 .WithName("DeleteUser")
                 .Produces(204)
                 .Produces(400);
+
+            users.MapPatch("/{id:int}/security", UpdateUserSecurity)
+                .WithName("UpdateUserSecurity")
+                .Accepts<UpdateUserSecurityDto>("application/json")
+                .Produces(200)
+                .Produces(404);
         }
+
+
 
         public static async Task<IResult> GetAll([FromServices] IUnitOfWork unitOfWork, [FromServices] IMapper mapper)
         {
@@ -129,5 +139,57 @@ namespace CompAuthApi.Endpoints
 
             return TypedResults.NoContent();
         }
+
+
+        public static async Task<IResult> UpdateUserSecurity([FromServices] CompAuthApiDbContext db, int id, [FromBody] UpdateUserSecurityDto dto)
+        { 
+            //selecting user with his security fields via id
+            var user = await db.Users
+                .Include(u => u.UserSecurity)
+                .FirstOrDefaultAsync(u => u.Id == id);
+            
+            //making sure the user exists
+            if (user == null)
+                return TypedResults.NotFound("User not found.");
+
+            //making sure the user security options exist
+            if (user.UserSecurity == null)
+            {
+                user.UserSecurity = new UserSecurity
+                {
+                    UserId = user.Id
+                };
+            }
+
+            //updating the relivant user locked fields via DTO data
+            user.UserSecurity.IsLocked = dto.IsLocked;
+            user.UserSecurity.LoginAttemptCount = dto.LoginAttemptCount;
+
+            // saving the changes to db and returning the updated fields
+            await db.SaveChangesAsync();
+
+            return TypedResults.Ok(new
+            {
+                Message = "User security updated successfully",
+                UserId = user.Id,
+                user.UserSecurity.IsLocked,
+                user.UserSecurity.LoginAttemptCount
+            });
+        }
+
+        // public static async Task<IResult> Unlock([FromServices] IUnitOfWork unitOfWork, [FromServices] IMapper mapper, int id)
+        // {
+
+        //     var user = await unitOfWork.Users.GetById(u => u.Id == id, includes: new List<string> { "UserSecurity" });
+        //     if (user == null) return TypedResults.NotFound("User not found.");
+
+        //     user.UserSecurity.IsLocked = false;
+        //     user.UserSecurity.LoginAttemptCount = 0;
+        //     Console.WriteLine(user.UserSecurity);
+                
+        //     unitOfWork.Users.Update(user);
+        //     await unitOfWork.SaveAsync();
+        //     return TypedResults.Ok(mapper.Map<UserDto>(user));
+        // }
     }
 }

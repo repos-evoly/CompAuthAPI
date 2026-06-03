@@ -18,6 +18,7 @@ using MailKit.Security;
 using MimeKit;
 using MimeKit.Utils;
 using MailKit.Net.Smtp;
+using Org.BouncyCastle.Asn1;
 
 namespace CompAuthApi.Endpoints
 {
@@ -78,8 +79,10 @@ namespace CompAuthApi.Endpoints
         {
             var jwtSection = config.GetSection("Jwt");
 
+            //if one of the credintial fields are empty return invalid!
             if (string.IsNullOrEmpty(dto.Login) || string.IsNullOrEmpty(dto.Password))
                 return TypedResults.NotFound("Invalid Credentials!");
+
 
             var user = await db.Users
             .Include(u => u.UserSecurity)
@@ -88,9 +91,49 @@ namespace CompAuthApi.Endpoints
               u.Email == dto.Login ||
               u.Username == dto.Login);
 
-            if (user == null || !BCrypt.Net.BCrypt.Verify(dto.Password, user.Password))
-                return TypedResults.Json(new { Message = "Invalid username or password." }, statusCode: StatusCodes.Status401Unauthorized);
             var settings = await db.Settings.FirstOrDefaultAsync();
+
+            if (user != null && user.UserSecurity.IsLocked == true)
+            {
+                var lockTime = user.UserSecurity.LastLock;
+
+                //if credintials are correct we check if the account is locked and if timeout expired or not!
+                //if timeout is expired we continue normally and reset locked status and login attempts else the locked message is returned
+                if (lockTime != null && DateTimeOffset.UtcNow < lockTime.Value.AddMinutes(settings.LockTimeoutMinutes))
+                    {
+                        return TypedResults.NotFound("User is Locked! please contact Support.");
+                    }
+
+                user.UserSecurity.IsLocked = false;
+                user.UserSecurity.LoginAttemptCount = 0;
+            }
+
+
+
+
+            if (user == null || !BCrypt.Net.BCrypt.Verify(dto.Password, user.Password))
+            {
+                //if user does not exist we simply return wrong username or password
+                if (user == null)
+                return TypedResults.Json(new { Message = "Invalid username or password." }, statusCode: StatusCodes.Status401Unauthorized);
+
+                user.UserSecurity ??= new UserSecurity { UserId = user.Id };
+                
+                //if user does exist and one of the credintials is correct we keep track of login attemps and lock user after x amount
+                //and record the time of locking
+                user.UserSecurity.LoginAttemptCount++;
+                if (user.UserSecurity.LoginAttemptCount >= settings.MaxLoginAttempts)
+                {
+                user.UserSecurity.IsLocked = true;
+                user.UserSecurity.LastLock = DateTime.UtcNow;
+                    
+                }
+
+                await db.SaveChangesAsync();
+                return TypedResults.Json(new { Message = "Invalid username or password." }, statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+
             bool isGlobal2FAEnabled = settings?.IsTwoFactorAuthEnabled ?? false;
 
             // 🔹 If 2FA is required globally and the user has it enabled, return "RequiresTwoFactor"
@@ -139,7 +182,8 @@ namespace CompAuthApi.Endpoints
                 KycToken = kycToken
             });
         }
-        /// <summary> Enable Google Authenticator 2FA </summary>
+      
+      /// <summary> Enable Google Authenticator 2FA </summary>
         /// <summary> Enable Google Authenticator 2FA and save QR code </summary>
         public static async Task<IResult> EnableTwoFactorAuthentication(
              CompAuthApiDbContext db,

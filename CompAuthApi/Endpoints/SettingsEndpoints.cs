@@ -32,6 +32,7 @@ namespace CompAuthApi.Endpoints
 
             return TypedResults.Ok(mapper.Map<SettingsDto>(settings));
         }
+        
 
         [Authorize(Roles = "Admin")]
         public static async Task<IResult> Update([FromServices] IUnitOfWork unitOfWork, [FromServices] IMapper mapper, [FromBody] EditSettingsDto settingsDto)

@@ -15,5 +15,8 @@ namespace CompAuthApi.Data.Models
         public string? RecaptchaSecretKey { get; set; } // Nullable
         public string? Url { get; set; } // Nullable
         public string? Date { get; set; } // Nullable
+        public int MaxLoginAttempts {get; set; } = 5;
+        public int LockTimeoutMinutes {get; set; } = 120;
+
     }
 }
