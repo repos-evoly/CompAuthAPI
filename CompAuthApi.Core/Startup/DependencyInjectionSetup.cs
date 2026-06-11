@@ -14,6 +14,7 @@ using Microsoft.OpenApi.Models;
 using Microsoft.Extensions.DependencyInjection;
 using CompAuthApi.Core.Filters;
 using CompAuthApi.Core.Repositories;
+using CompAuthApi.Core.Services;
 using Microsoft.AspNetCore.Builder;
 using CompAuthApi.Core.Abstractions;
 using Microsoft.Extensions.Hosting;
@@ -141,6 +142,38 @@ namespace CompAuthApi.Core.Startup
                   }
                   return Task.CompletedTask;
                 },
+                OnTokenValidated = async context =>
+                {
+                  const string sessionIdClaimType = "sessionId";
+                  const int idleSessionMinutes = 15;
+
+                  var sessionId = context.Principal?.FindFirst(sessionIdClaimType)?.Value;
+                  if (string.IsNullOrWhiteSpace(sessionId))
+                  {
+                    context.Fail("Authentication session is missing.");
+                    return;
+                  }
+
+                  var db = context.HttpContext.RequestServices.GetRequiredService<CompAuthApiDbContext>();
+                  var now = DateTimeOffset.UtcNow;
+                  var cutoff = now.AddMinutes(-idleSessionMinutes);
+
+                  var session = await db.UserSessions.FirstOrDefaultAsync(s => s.SessionId == sessionId);
+                  if (session == null ||
+                      !session.IsActive ||
+                      session.LoggedOutAt != null ||
+                      session.ExpiresAt <= now ||
+                      session.LastSeenAt <= cutoff)
+                  {
+                    if (session != null && session.IsActive)
+                    {
+                      session.IsActive = false;
+                      await db.SaveChangesAsync();
+                    }
+
+                    context.Fail("Authentication session is expired or inactive.");
+                  }
+                },
                 // The below should be uncommented in case the above "ValidateLifetime = true"
                 // OnAuthenticationFailed = context =>
                 // {
@@ -185,6 +218,7 @@ namespace CompAuthApi.Core.Startup
       services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
       services.AddScoped<IQrCodeRepository, QrCodeRepository>();
       services.AddScoped<IAuthRepository, AuthRepository>();
+      services.AddScoped<IGeoFenceService, GeoFenceService>();
       services.AddTransient<IUnitOfWork, UnitOfWork>();
 
       return services;

@@ -36,5 +36,7 @@ namespace CompAuthApi.Data.Models
         public Role? Role { get; set; }
 
         public required UserSecurity UserSecurity { get; set; }
+        public ICollection<UserSession> UserSessions { get; set; } = new List<UserSession>();
+        public ICollection<UserLoginEvent> LoginEvents { get; set; } = new List<UserLoginEvent>();
     }
 }

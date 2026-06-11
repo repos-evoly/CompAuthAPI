@@ -18,6 +18,10 @@ namespace CompAuthApi.Data.Context
 
         public DbSet<UserSecurity> UserSecurities => Set<UserSecurity>();
         public DbSet<Settings> Settings => Set<Settings>();
+        public DbSet<UserSession> UserSessions => Set<UserSession>();
+        public DbSet<GeoFenceSetting> GeoFenceSettings => Set<GeoFenceSetting>();
+        public DbSet<GeoFenceCountryRule> GeoFenceCountryRules => Set<GeoFenceCountryRule>();
+        public DbSet<UserLoginEvent> UserLoginEvents => Set<UserLoginEvent>();
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -46,9 +50,25 @@ namespace CompAuthApi.Data.Context
                 .HasForeignKey<UserSecurity>(us => us.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            builder.Entity<UserSession>()
+                .HasOne(s => s.User)
+                .WithMany(u => u.UserSessions)
+                .HasForeignKey(s => s.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            builder.Entity<UserLoginEvent>()
+                .HasOne(e => e.User)
+                .WithMany(u => u.LoginEvents)
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
             builder.Entity<UserSecurity>().HasIndex(us => us.TwoFactorSecretKey).IsUnique();
 
             builder.Entity<Settings>()
+               .HasIndex(s => s.Id)
+               .IsUnique();
+
+            builder.Entity<GeoFenceSetting>()
                .HasIndex(s => s.Id)
                .IsUnique();
         }

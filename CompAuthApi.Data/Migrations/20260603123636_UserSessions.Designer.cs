@@ -4,6 +4,7 @@ using CompAuthApi.Data.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CompAuthApi.Data.Migrations
 {
     [DbContext(typeof(CompAuthApiDbContext))]
-    partial class CompAuthApiDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260603123636_UserSessions")]
+    partial class UserSessions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -21,87 +24,6 @@ namespace CompAuthApi.Data.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
-
-            modelBuilder.Entity("CompAuthApi.Data.Models.GeoFenceCountryRule", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CooldownMinutes")
-                        .HasColumnType("int");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<string>("FromCountryCode")
-                        .IsRequired()
-                        .HasMaxLength(2)
-                        .HasColumnType("nvarchar(2)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("IsAllowed")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("ToCountryCode")
-                        .IsRequired()
-                        .HasMaxLength(2)
-                        .HasColumnType("nvarchar(2)");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex(new[] { "FromCountryCode", "ToCountryCode", "IsActive" }, "IX_GeoFenceCountryRules_CountryPair");
-
-                    b.ToTable("GeoFenceCountryRules");
-                });
-
-            modelBuilder.Entity("CompAuthApi.Data.Models.GeoFenceSetting", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<bool>("BlockUnknownCountries")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("BypassPrivateIps")
-                        .HasColumnType("bit");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<bool>("DebugExposeClientIp")
-                        .HasColumnType("bit");
-
-                    b.Property<int>("DefaultCountrySwitchCooldownMinutes")
-                        .HasColumnType("int");
-
-                    b.Property<bool>("IsEnabled")
-                        .HasColumnType("bit");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Id")
-                        .IsUnique();
-
-                    b.ToTable("GeoFenceSettings");
-                });
 
             modelBuilder.Entity("CompAuthApi.Data.Models.Role", b =>
                 {
@@ -232,68 +154,6 @@ namespace CompAuthApi.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("Users");
-                });
-
-            modelBuilder.Entity("CompAuthApi.Data.Models.UserLoginEvent", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("CountryCode")
-                        .HasMaxLength(2)
-                        .HasColumnType("nvarchar(2)");
-
-                    b.Property<string>("CountryName")
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<DateTimeOffset>("EventAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("FailureCode")
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
-
-                    b.Property<string>("FailureReason")
-                        .HasMaxLength(512)
-                        .HasColumnType("nvarchar(512)");
-
-                    b.Property<string>("IpAddress")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<bool>("IsSuccessful")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("RemoteIpAddress")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("SessionId")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("int");
-
-                    b.Property<string>("XForwardedFor")
-                        .HasMaxLength(512)
-                        .HasColumnType("nvarchar(512)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex(new[] { "UserId", "IsSuccessful", "EventAt" }, "IX_UserLoginEvents_User_Success_Time");
-
-                    b.ToTable("UserLoginEvents");
                 });
 
             modelBuilder.Entity("CompAuthApi.Data.Models.UserSecurity", b =>
@@ -428,17 +288,6 @@ namespace CompAuthApi.Data.Migrations
                     b.Navigation("Role");
                 });
 
-            modelBuilder.Entity("CompAuthApi.Data.Models.UserLoginEvent", b =>
-                {
-                    b.HasOne("CompAuthApi.Data.Models.User", "User")
-                        .WithMany("LoginEvents")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
             modelBuilder.Entity("CompAuthApi.Data.Models.UserSecurity", b =>
                 {
                     b.HasOne("CompAuthApi.Data.Models.User", "User")
@@ -468,8 +317,6 @@ namespace CompAuthApi.Data.Migrations
 
             modelBuilder.Entity("CompAuthApi.Data.Models.User", b =>
                 {
-                    b.Navigation("LoginEvents");
-
                     b.Navigation("UserSecurity")
                         .IsRequired();
 

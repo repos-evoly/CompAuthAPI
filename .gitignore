@@ -407,3 +407,6 @@ c:\\kyc\\logs*
 
 # Ignore Attachments Folder
 KycApi/Attachments/
+
+# GeoIP database files
+GeoLite2-Country_*/
