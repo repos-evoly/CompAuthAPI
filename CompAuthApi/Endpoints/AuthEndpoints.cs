@@ -85,7 +85,12 @@ namespace CompAuthApi.Endpoints
 
         /// <summary> Login with JWT </summary>
         /// Ask Mr ismat about Login and 2fa logic cases like if settings table has 2fa off but user has enabled 2fa will it ask him?? if settings has 2fa on it should force all users to enable 2fa? 
-        public static async Task<IResult> Login(CompAuthApiDbContext db, IConfiguration config, HttpContext httpContext, LoginDto dto)
+        public static async Task<IResult> Login(
+            CompAuthApiDbContext db,
+            IConfiguration config,
+            IGeoFenceService geoFenceService,
+            HttpContext httpContext,
+            LoginDto dto)
         {
             var now = DateTimeOffset.UtcNow;
             var settings = await db.Settings.FirstOrDefaultAsync();
@@ -175,7 +180,11 @@ namespace CompAuthApi.Endpoints
                 return TypedResults.Ok(new { RequiresTwoFactor = true, DeviceId = requestedDeviceId });
             }
 
-            var loginResponse = await CreateSessionAndTokenResponse(db, config, httpContext, user, requestedDeviceId, now);
+            var geoFenceEvaluation = await EvaluateGeoFenceAsync(db, geoFenceService, user, httpContext, now);
+            if (geoFenceEvaluation.Error != null)
+                return TypedResults.Ok(geoFenceEvaluation.Error);
+
+            var loginResponse = await CreateSessionAndTokenResponse(db, config, geoFenceService, geoFenceEvaluation, httpContext, user, requestedDeviceId, now);
             return TypedResults.Ok(loginResponse);
         }
       
@@ -230,6 +239,7 @@ namespace CompAuthApi.Endpoints
         public static async Task<IResult> VerifyInitialTwoFactorSetup(
             CompAuthApiDbContext db,
             IConfiguration config,
+            IGeoFenceService geoFenceService,
             HttpContext httpContext,
             VerifyTwoFactorDto dto)
         {
@@ -251,16 +261,20 @@ namespace CompAuthApi.Endpoints
             if (!isValidOtp)
                 return TypedResults.BadRequest("Invalid OTP. Please scan and try again.");
 
-            // ✅ Enable 2FA for the user
-            user.UserSecurity.IsTwoFactorEnabled = true;
-
             var now = DateTimeOffset.UtcNow;
             var requestedDeviceId = GetOrCreateDeviceId(httpContext);
             var sessionAvailabilityError = await ValidateSessionAvailability(db, user.Id, requestedDeviceId, now);
             if (sessionAvailabilityError != null)
                 return TypedResults.Ok(sessionAvailabilityError);
 
-            var response = await CreateSessionAndTokenResponse(db, config, httpContext, user, requestedDeviceId, now);
+            var geoFenceEvaluation = await EvaluateGeoFenceAsync(db, geoFenceService, user, httpContext, now);
+            if (geoFenceEvaluation.Error != null)
+                return TypedResults.Ok(geoFenceEvaluation.Error);
+
+            // ✅ Enable 2FA for the user only after login policy checks pass.
+            user.UserSecurity.IsTwoFactorEnabled = true;
+
+            var response = await CreateSessionAndTokenResponse(db, config, geoFenceService, geoFenceEvaluation, httpContext, user, requestedDeviceId, now);
 
             return TypedResults.Ok(new
             {
@@ -271,7 +285,8 @@ namespace CompAuthApi.Endpoints
                 response.SessionId,
                 response.DeviceId,
                 response.SessionExpiresAt,
-                response.HeartbeatIntervalMinutes
+                response.HeartbeatIntervalMinutes,
+                response.DebugClientIp
             });
         }
 
@@ -279,6 +294,7 @@ namespace CompAuthApi.Endpoints
         public static async Task<IResult> VerifyTwoFactorAuthentication(
             CompAuthApiDbContext db,
             IConfiguration config,
+            IGeoFenceService geoFenceService,
             HttpContext httpContext,
             VerifyTwoFactorDto dto)
         {
@@ -306,7 +322,11 @@ namespace CompAuthApi.Endpoints
             if (sessionAvailabilityError != null)
                 return TypedResults.Ok(sessionAvailabilityError);
 
-            var response = await CreateSessionAndTokenResponse(db, config, httpContext, user, requestedDeviceId, now);
+            var geoFenceEvaluation = await EvaluateGeoFenceAsync(db, geoFenceService, user, httpContext, now);
+            if (geoFenceEvaluation.Error != null)
+                return TypedResults.Ok(geoFenceEvaluation.Error);
+
+            var response = await CreateSessionAndTokenResponse(db, config, geoFenceService, geoFenceEvaluation, httpContext, user, requestedDeviceId, now);
 
             return TypedResults.Ok(new
             {
@@ -317,7 +337,8 @@ namespace CompAuthApi.Endpoints
                 response.SessionId,
                 response.DeviceId,
                 response.SessionExpiresAt,
-                response.HeartbeatIntervalMinutes
+                response.HeartbeatIntervalMinutes,
+                response.DebugClientIp
             });
         }
 
@@ -550,6 +571,8 @@ namespace CompAuthApi.Endpoints
         private static async Task<SessionTokenResponse> CreateSessionAndTokenResponse(
             CompAuthApiDbContext db,
             IConfiguration config,
+            IGeoFenceService geoFenceService,
+            GeoFenceEvaluationDto geoFenceEvaluation,
             HttpContext httpContext,
             User user,
             string deviceId,
@@ -574,6 +597,7 @@ namespace CompAuthApi.Endpoints
             };
 
             db.UserSessions.Add(session);
+            await geoFenceService.RecordLoginEventAsync(user, geoFenceEvaluation, now, true, session.SessionId);
 
             ClearLockout(user.UserSecurity);
             user.UserSecurity.LastLogin = now;
@@ -592,7 +616,31 @@ namespace CompAuthApi.Endpoints
                 session.SessionId,
                 session.DeviceId,
                 session.ExpiresAt,
-                HeartbeatIntervalMinutes);
+                HeartbeatIntervalMinutes,
+                geoFenceEvaluation.ShouldExposeDebugClientIp ? geoFenceEvaluation.DebugClientIp : null);
+        }
+
+        private static async Task<GeoFenceEvaluationDto> EvaluateGeoFenceAsync(
+            CompAuthApiDbContext db,
+            IGeoFenceService geoFenceService,
+            User user,
+            HttpContext httpContext,
+            DateTimeOffset now)
+        {
+            var evaluation = await geoFenceService.EvaluateLoginAsync(user, httpContext, now);
+            if (!evaluation.IsAllowed && evaluation.Error != null)
+            {
+                await geoFenceService.RecordLoginEventAsync(
+                    user,
+                    evaluation,
+                    now,
+                    false,
+                    failureCode: evaluation.FailureCode,
+                    failureReason: evaluation.FailureReason);
+                await db.SaveChangesAsync();
+            }
+
+            return evaluation;
         }
 
         private static async Task<AuthApiErrorResponseDto?> ValidateSessionAvailability(
@@ -946,7 +994,8 @@ namespace CompAuthApi.Endpoints
             string SessionId,
             string DeviceId,
             DateTimeOffset SessionExpiresAt,
-            int HeartbeatIntervalMinutes);
+            int HeartbeatIntervalMinutes,
+            GeoFenceDebugInfoDto? DebugClientIp);
 
         private class RecaptchaResponse
         {

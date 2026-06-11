@@ -24,4 +24,8 @@
     <ProjectReference Include="..\CompAuthApi.Core\CompAuthApi.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="..\GeoLite2-Country_20260602\GeoLite2-Country.mmdb" Link="GeoIp\GeoLite2-Country.mmdb" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
