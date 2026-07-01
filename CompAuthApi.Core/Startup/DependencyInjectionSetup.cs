@@ -145,7 +145,7 @@ namespace CompAuthApi.Core.Startup
                 OnTokenValidated = async context =>
                 {
                   const string sessionIdClaimType = "sessionId";
-                  const int idleSessionMinutes = 15;
+                  const int idleSessionMinutes = 5;
 
                   var sessionId = context.Principal?.FindFirst(sessionIdClaimType)?.Value;
                   if (string.IsNullOrWhiteSpace(sessionId))

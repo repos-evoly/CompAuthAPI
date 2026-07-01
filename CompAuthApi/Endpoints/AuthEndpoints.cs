@@ -28,7 +28,7 @@ namespace CompAuthApi.Endpoints
         private const string SessionCookieName = "authSessionId";
         private const string DeviceCookieName = "authDeviceId";
         private const int AbsoluteSessionMinutes = 180;
-        private const int IdleSessionMinutes = 15;
+        private const int IdleSessionMinutes = 5;
         private const int HeartbeatIntervalMinutes = 5;
         private const int DefaultMaxLoginAttempts = 5;
         private const int DefaultLockTimeoutMinutes = 120;
