@@ -5,6 +5,7 @@ using CompAuthApi.Extensions;
 
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddServiceTokenEnvironmentAliases();
 builder.RegisterServices();
 builder.Logging.ClearProviders();
 builder.Host.ConfigureSerilog();
@@ -23,6 +24,7 @@ app.ConfigureStaticFiles();
 
 app.UseCors("AllowSpecificOrigins");
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.UseAlways200ResponseWrapper();

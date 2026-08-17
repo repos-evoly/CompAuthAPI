@@ -22,6 +22,12 @@ namespace CompAuthApi.Data.Context
         public DbSet<GeoFenceSetting> GeoFenceSettings => Set<GeoFenceSetting>();
         public DbSet<GeoFenceCountryRule> GeoFenceCountryRules => Set<GeoFenceCountryRule>();
         public DbSet<UserLoginEvent> UserLoginEvents => Set<UserLoginEvent>();
+        public DbSet<MobileDevice> MobileDevices => Set<MobileDevice>();
+        public DbSet<DeviceActivationCode> DeviceActivationCodes => Set<DeviceActivationCode>();
+        public DbSet<DeviceChallenge> DeviceChallenges => Set<DeviceChallenge>();
+        public DbSet<DeviceSession> DeviceSessions => Set<DeviceSession>();
+        public DbSet<DeviceLoginGrant> DeviceLoginGrants => Set<DeviceLoginGrant>();
+        public DbSet<MobilePushToken> MobilePushTokens => Set<MobilePushToken>();
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -60,6 +66,41 @@ namespace CompAuthApi.Data.Context
                 .HasOne(e => e.User)
                 .WithMany(u => u.LoginEvents)
                 .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            builder.Entity<MobileDevice>()
+                .Property(device => device.Status)
+                .HasConversion<string>()
+                .HasMaxLength(16);
+
+            builder.Entity<DeviceChallenge>()
+                .HasOne(challenge => challenge.ActivationCode)
+                .WithMany()
+                .HasForeignKey(challenge => challenge.ActivationCodeId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            builder.Entity<DeviceChallenge>()
+                .HasOne(challenge => challenge.MobileDevice)
+                .WithMany(device => device.Challenges)
+                .HasForeignKey(challenge => challenge.MobileDeviceId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            builder.Entity<DeviceSession>()
+                .HasOne(session => session.MobileDevice)
+                .WithMany(device => device.DeviceSessions)
+                .HasForeignKey(session => session.MobileDeviceId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            builder.Entity<DeviceLoginGrant>()
+                .HasOne(grant => grant.MobileDevice)
+                .WithMany(device => device.LoginGrants)
+                .HasForeignKey(grant => grant.MobileDeviceId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            builder.Entity<MobilePushToken>()
+                .HasOne(token => token.MobileDevice)
+                .WithOne(device => device.PushToken)
+                .HasForeignKey<MobilePushToken>(token => token.MobileDeviceId)
                 .OnDelete(DeleteBehavior.Cascade);
 
             builder.Entity<UserSecurity>().HasIndex(us => us.TwoFactorSecretKey).IsUnique();

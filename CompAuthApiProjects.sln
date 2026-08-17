@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CompAuthApi.Data", "CompAut
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CompAuthApi.Core", "CompAuthApi.Core\CompAuthApi.Core.csproj", "{B9F65DD3-38AC-424F-BD10-261547442A4D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CompAuthApi.Tests", "CompAuthApi.Tests\CompAuthApi.Tests.csproj", "{6196408F-BE33-493D-B3A8-2A716689C0DB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,5 +32,9 @@ Global
 		{B9F65DD3-38AC-424F-BD10-261547442A4D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B9F65DD3-38AC-424F-BD10-261547442A4D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B9F65DD3-38AC-424F-BD10-261547442A4D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6196408F-BE33-493D-B3A8-2A716689C0DB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6196408F-BE33-493D-B3A8-2A716689C0DB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6196408F-BE33-493D-B3A8-2A716689C0DB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6196408F-BE33-493D-B3A8-2A716689C0DB}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

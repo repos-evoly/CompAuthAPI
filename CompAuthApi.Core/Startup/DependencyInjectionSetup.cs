@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using CompAuthApi.Core.Filters;
 using CompAuthApi.Core.Repositories;
 using CompAuthApi.Core.Services;
@@ -20,6 +21,12 @@ using CompAuthApi.Core.Abstractions;
 using Microsoft.Extensions.Hosting;
 using CompAuthApi.Data.Seeding;
 using CompAuthApi.Data.Repositories;
+using CompAuthApi.Core.Authentication;
+using CompAuthApi.Core.Devices;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 
 namespace CompAuthApi.Core.Startup
 {
@@ -34,6 +41,15 @@ namespace CompAuthApi.Core.Startup
       builder.Services.RegisterCors();
       builder.Services.RegisterSwagger();
       builder.Services.RegisterAuths(issuer, audience, jwtKey);
+      builder.Services.RegisterMobileServiceAuthentication(builder.Configuration);
+      builder.Services.RegisterMobileAuthRateLimits();
+      builder.Services
+        .AddOptions<DeviceSecurityOptions>()
+        .Bind(builder.Configuration.GetSection(DeviceSecurityOptions.SectionName));
+      builder.Services.AddScoped<IDeviceSecurityService, DeviceSecurityService>();
+      builder.Services.AddScoped<IDeviceAdministrationService, DeviceAdministrationService>();
+      builder.Services.AddScoped<IDeviceAttestationValidator, DeviceAttestationValidator>();
+      builder.Services.AddScoped<IMobilePushTokenService, MobilePushTokenService>();
       if (builder.Environment.IsDevelopment())
       {
         builder.Services.AddDbContext<CompAuthApiDbContext>(opt =>
@@ -205,6 +221,89 @@ namespace CompAuthApi.Core.Startup
         a.AddPolicy("AdmViwChk", b => b.RequireRole("SuperAdmin", "Admin", "Viewer", "Checker", "GeneralChecker"));
       });
       return auth;
+    }
+
+    public static IServiceCollection RegisterMobileServiceAuthentication(
+      this IServiceCollection services,
+      IConfiguration configuration)
+    {
+      services
+        .AddOptions<ServiceTokenOptions>()
+        .Bind(configuration.GetSection(ServiceTokenOptions.SectionName));
+      services.AddSingleton(TimeProvider.System);
+      services.AddSingleton<ServiceTokenService>();
+      services.AddSingleton<IServiceTokenService>(provider =>
+        provider.GetRequiredService<ServiceTokenService>());
+      services.AddSingleton<IMobileAuthChallengeService>(provider =>
+        provider.GetRequiredService<ServiceTokenService>());
+
+      services.AddAuthentication()
+        .AddScheme<AuthenticationSchemeOptions, ServiceTokenAuthenticationHandler>(
+          ServiceAuthenticationDefaults.Scheme,
+          _ => { });
+
+      services.AddAuthorization(options =>
+      {
+        options.AddPolicy(
+          ServiceAuthenticationDefaults.RequireMobileBffServicePolicy,
+          policy => policy
+            .AddAuthenticationSchemes(ServiceAuthenticationDefaults.Scheme)
+            .RequireAuthenticatedUser()
+            .RequireClaim(
+              "token_type",
+              ServiceAuthenticationDefaults.ServiceTokenType));
+
+        options.AddPolicy(
+          ServiceAuthenticationDefaults.RequireCompanyUserAndMobileBffServicePolicy,
+          policy => policy
+            .AddAuthenticationSchemes(
+              JwtBearerDefaults.AuthenticationScheme,
+              ServiceAuthenticationDefaults.Scheme)
+            .RequireAssertion(context =>
+              context.User.HasClaim(
+                "token_type",
+                ServiceAuthenticationDefaults.ServiceTokenType) &&
+              context.User.HasClaim(claim =>
+                claim.Type == "sessionId" &&
+                !string.IsNullOrWhiteSpace(claim.Value)) &&
+              context.User.HasClaim(claim =>
+                claim.Type == System.Security.Claims.ClaimTypes.NameIdentifier &&
+                !string.IsNullOrWhiteSpace(claim.Value))));
+      });
+
+      return services;
+    }
+
+    public static IServiceCollection RegisterMobileAuthRateLimits(
+      this IServiceCollection services)
+    {
+      services.AddRateLimiter(options =>
+      {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.AddFixedWindowLimiter("service-auth-token", limiter =>
+        {
+          limiter.PermitLimit = 10;
+          limiter.Window = TimeSpan.FromMinutes(1);
+          limiter.QueueLimit = 0;
+          limiter.AutoReplenishment = true;
+        });
+        options.AddFixedWindowLimiter("mobile-auth-sensitive", limiter =>
+        {
+          limiter.PermitLimit = 60;
+          limiter.Window = TimeSpan.FromMinutes(1);
+          limiter.QueueLimit = 0;
+          limiter.AutoReplenishment = true;
+        });
+        options.AddFixedWindowLimiter("mobile-auth-standard", limiter =>
+        {
+          limiter.PermitLimit = 240;
+          limiter.Window = TimeSpan.FromMinutes(1);
+          limiter.QueueLimit = 0;
+          limiter.AutoReplenishment = true;
+        });
+      });
+
+      return services;
     }
 
     public static IServiceCollection RegisterValidators(this IServiceCollection validators)

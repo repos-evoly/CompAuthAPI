@@ -4,6 +4,7 @@ using CompAuthApi.Data.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CompAuthApi.Data.Migrations
 {
     [DbContext(typeof(CompAuthApiDbContext))]
-    partial class CompAuthApiDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260811102604_MobileDeviceAuthentication")]
+    partial class MobileDeviceAuthentication
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -372,49 +375,6 @@ namespace CompAuthApi.Data.Migrations
                     b.ToTable("MobileDevices");
                 });
 
-            modelBuilder.Entity("CompAuthApi.Data.Models.MobilePushToken", b =>
-                {
-                    b.Property<Guid>("MobileDeviceId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("AppVersion")
-                        .HasMaxLength(32)
-                        .HasColumnType("nvarchar(32)");
-
-                    b.Property<int>("AuthUserId")
-                        .HasColumnType("int");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("Platform")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("nvarchar(16)");
-
-                    b.Property<string>("Token")
-                        .IsRequired()
-                        .HasMaxLength(4096)
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("TokenHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.HasKey("MobileDeviceId");
-
-                    b.HasIndex("AuthUserId");
-
-                    b.HasIndex("TokenHash")
-                        .IsUnique();
-
-                    b.ToTable("MobilePushTokens");
-                });
-
             modelBuilder.Entity("CompAuthApi.Data.Models.Role", b =>
                 {
                     b.Property<int>("Id")
@@ -769,17 +729,6 @@ namespace CompAuthApi.Data.Migrations
                     b.Navigation("MobileDevice");
                 });
 
-            modelBuilder.Entity("CompAuthApi.Data.Models.MobilePushToken", b =>
-                {
-                    b.HasOne("CompAuthApi.Data.Models.MobileDevice", "MobileDevice")
-                        .WithOne("PushToken")
-                        .HasForeignKey("CompAuthApi.Data.Models.MobilePushToken", "MobileDeviceId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("MobileDevice");
-                });
-
             modelBuilder.Entity("CompAuthApi.Data.Models.User", b =>
                 {
                     b.HasOne("CompAuthApi.Data.Models.Role", "Role")
@@ -831,8 +780,6 @@ namespace CompAuthApi.Data.Migrations
                     b.Navigation("DeviceSessions");
 
                     b.Navigation("LoginGrants");
-
-                    b.Navigation("PushToken");
                 });
 
             modelBuilder.Entity("CompAuthApi.Data.Models.Role", b =>
