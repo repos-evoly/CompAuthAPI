@@ -82,19 +82,24 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
         EnsureEnabled();
         var now = _timeProvider.GetUtcNow();
         var activationHash = HashSecret(request.ActivationCode);
-        var activation = await _db.DeviceActivationCodes
+        var activationPreview = await _db.DeviceActivationCodes
+            .AsNoTracking()
             .FirstOrDefaultAsync(code => code.CodeHash == activationHash, cancellationToken);
-        if (activation is null || activation.ExpiresAt <= now ||
-            activation.UsedAt is not null || activation.UsedByDeviceId is not null)
+        if (activationPreview is null || activationPreview.ExpiresAt <= now ||
+            activationPreview.UsedAt is not null)
         {
             throw new InvalidActivationCodeException();
         }
 
-        if (await _db.MobileDevices.AnyAsync(
+        var existingPreview = await _db.MobileDevices
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
                 device => device.InstallationId == request.InstallationId,
-                cancellationToken))
+                cancellationToken);
+        if (activationPreview.UsedByDeviceId is not null &&
+            activationPreview.UsedByDeviceId != existingPreview?.Id)
         {
-            throw new DeviceEnrollmentConflictException();
+            throw new InvalidActivationCodeException();
         }
 
         string fingerprint;
@@ -109,49 +114,104 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
             throw new InvalidDevicePublicKeyException();
         }
 
+        if (existingPreview is not null &&
+            !CanResumeEnrollment(existingPreview, activationPreview, request, fingerprint))
+        {
+            throw new DeviceEnrollmentConflictException();
+        }
+
         var attestation = await _attestationValidator.ValidateAsync(
             request.Platform,
             request.InstallationId,
             request.AttestationProvider,
             request.AttestationToken,
             cancellationToken);
-
-        var device = new MobileDevice
+        var executionStrategy = _db.Database.CreateExecutionStrategy();
+        return await executionStrategy.ExecuteAsync(async () =>
         {
-            Id = Guid.NewGuid(),
-            InstallationId = request.InstallationId,
-            TargetAuthUserId = activation.TargetAuthUserId,
-            LoginHash = activation.LoginHash,
-            CompanyCode = activation.CompanyCode,
-            Platform = request.Platform.ToLowerInvariant(),
-            AppVersion = NormalizeOptional(request.AppVersion),
-            KeyAlgorithm = request.KeyAlgorithm.ToLowerInvariant(),
-            PublicKeyPem = request.PublicKeyPem.Trim(),
-            PublicKeyFingerprint = fingerprint,
-            AttestationProvider = attestation.Provider,
-            AttestationStatus = attestation.Status,
-            Status = DeviceRegistrationStatus.Pending,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        var challenge = CreateChallenge(
-            device.Id,
-            activation.Id,
-            EnrollmentPurpose,
-            now,
-            _options.CurrentValue.EnrollmentChallengeLifetimeSeconds);
+            await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+            var activation = await _db.DeviceActivationCodes
+                .FirstOrDefaultAsync(code => code.CodeHash == activationHash, cancellationToken);
+            if (activation is null || activation.ExpiresAt <= now ||
+                activation.UsedAt is not null)
+            {
+                throw new InvalidActivationCodeException();
+            }
 
-        activation.UsedByDeviceId = device.Id;
-        _db.MobileDevices.Add(device);
-        _db.DeviceChallenges.Add(challenge);
-        await _db.SaveChangesAsync(cancellationToken);
+            var existingDevice = await _db.MobileDevices.FirstOrDefaultAsync(
+                device => device.InstallationId == request.InstallationId,
+                cancellationToken);
+            if (activation.UsedByDeviceId is not null &&
+                activation.UsedByDeviceId != existingDevice?.Id)
+            {
+                throw new InvalidActivationCodeException();
+            }
 
-        return new DeviceEnrollmentChallengeResponse(
-            challenge.Id,
-            challenge.Nonce,
-            challenge.ExpiresAt,
-            EnrollmentPurpose,
-            device.Id);
+            MobileDevice device;
+            if (existingDevice is null)
+            {
+                device = new MobileDevice
+                {
+                    Id = Guid.NewGuid(),
+                    InstallationId = request.InstallationId,
+                    TargetAuthUserId = activation.TargetAuthUserId,
+                    LoginHash = activation.LoginHash,
+                    CompanyCode = activation.CompanyCode,
+                    Platform = request.Platform.ToLowerInvariant(),
+                    AppVersion = NormalizeOptional(request.AppVersion),
+                    KeyAlgorithm = request.KeyAlgorithm.ToLowerInvariant(),
+                    PublicKeyPem = request.PublicKeyPem.Trim(),
+                    PublicKeyFingerprint = fingerprint,
+                    AttestationProvider = attestation.Provider,
+                    AttestationStatus = attestation.Status,
+                    Status = DeviceRegistrationStatus.Pending,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                _db.MobileDevices.Add(device);
+            }
+            else
+            {
+                if (!CanResumeEnrollment(existingDevice, activation, request, fingerprint))
+                {
+                    throw new DeviceEnrollmentConflictException();
+                }
+
+                device = existingDevice;
+                device.AppVersion = NormalizeOptional(request.AppVersion);
+                device.AttestationProvider = attestation.Provider;
+                device.AttestationStatus = attestation.Status;
+                device.UpdatedAt = now;
+
+                await _db.DeviceChallenges
+                    .Where(challenge =>
+                        challenge.MobileDeviceId == device.Id &&
+                        challenge.Purpose == EnrollmentPurpose &&
+                        challenge.UsedAt == null)
+                    .ExecuteUpdateAsync(
+                        setters => setters.SetProperty(challenge => challenge.UsedAt, now),
+                        cancellationToken);
+            }
+
+            var challenge = CreateChallenge(
+                device.Id,
+                activation.Id,
+                EnrollmentPurpose,
+                now,
+                _options.CurrentValue.EnrollmentChallengeLifetimeSeconds);
+
+            activation.UsedByDeviceId = device.Id;
+            _db.DeviceChallenges.Add(challenge);
+            await _db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return new DeviceEnrollmentChallengeResponse(
+                challenge.Id,
+                challenge.Nonce,
+                challenge.ExpiresAt,
+                EnrollmentPurpose,
+                device.Id);
+        });
     }
 
     public async Task<DeviceEnrollmentResponse> CompleteEnrollmentAsync(
@@ -159,71 +219,75 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
         CancellationToken cancellationToken)
     {
         EnsureEnabled();
-        var now = _timeProvider.GetUtcNow();
-        var challenge = await _db.DeviceChallenges
-            .AsNoTracking()
-            .Include(item => item.MobileDevice)
-            .Include(item => item.ActivationCode)
-            .FirstOrDefaultAsync(item => item.Id == request.ChallengeId, cancellationToken);
-        if (challenge is null || challenge.Purpose != EnrollmentPurpose ||
-            challenge.UsedAt is not null || challenge.ExpiresAt <= now ||
-            challenge.ActivationCode is null ||
-            challenge.ActivationCode.UsedAt is not null ||
-            challenge.ActivationCode.UsedByDeviceId != challenge.MobileDeviceId)
+        var executionStrategy = _db.Database.CreateExecutionStrategy();
+        return await executionStrategy.ExecuteAsync(async () =>
         {
-            throw new InvalidDeviceChallengeException();
-        }
+            var now = _timeProvider.GetUtcNow();
+            var challenge = await _db.DeviceChallenges
+                .AsNoTracking()
+                .Include(item => item.MobileDevice)
+                .Include(item => item.ActivationCode)
+                .FirstOrDefaultAsync(item => item.Id == request.ChallengeId, cancellationToken);
+            if (challenge is null || challenge.Purpose != EnrollmentPurpose ||
+                challenge.UsedAt is not null || challenge.ExpiresAt <= now ||
+                challenge.ActivationCode is null ||
+                challenge.ActivationCode.UsedAt is not null ||
+                challenge.ActivationCode.UsedByDeviceId != challenge.MobileDeviceId)
+            {
+                throw new InvalidDeviceChallengeException();
+            }
 
-        if (!DeviceProofVerifier.Verify(
-                challenge.MobileDevice.KeyAlgorithm,
-                challenge.MobileDevice.PublicKeyPem,
-                EnrollmentPurpose,
-                challenge.Id,
-                challenge.Nonce,
-                challenge.MobileDevice.InstallationId,
-                request.Signature))
-        {
-            throw new InvalidDeviceProofException();
-        }
+            if (!DeviceProofVerifier.Verify(
+                    challenge.MobileDevice.KeyAlgorithm,
+                    challenge.MobileDevice.PublicKeyPem,
+                    EnrollmentPurpose,
+                    challenge.Id,
+                    challenge.Nonce,
+                    challenge.MobileDevice.InstallationId,
+                    request.Signature))
+            {
+                throw new InvalidDeviceProofException();
+            }
 
-        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
-        var consumedChallenge = await _db.DeviceChallenges
-            .Where(item => item.Id == challenge.Id && item.UsedAt == null)
-            .ExecuteUpdateAsync(
-                setters => setters.SetProperty(item => item.UsedAt, now),
-                cancellationToken);
-        var consumedCode = await _db.DeviceActivationCodes
-            .Where(code =>
-                code.Id == challenge.ActivationCodeId &&
-                code.UsedAt == null &&
-                code.UsedByDeviceId == challenge.MobileDeviceId)
-            .ExecuteUpdateAsync(
-                setters => setters.SetProperty(code => code.UsedAt, now),
-                cancellationToken);
-        if (consumedChallenge != 1 || consumedCode != 1)
-        {
-            throw new InvalidDeviceChallengeException();
-        }
+            await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+            var consumedChallenge = await _db.DeviceChallenges
+                .Where(item => item.Id == challenge.Id && item.UsedAt == null)
+                .ExecuteUpdateAsync(
+                    setters => setters.SetProperty(item => item.UsedAt, now),
+                    cancellationToken);
+            var consumedCode = await _db.DeviceActivationCodes
+                .Where(code =>
+                    code.Id == challenge.ActivationCodeId &&
+                    code.UsedAt == null &&
+                    code.UsedByDeviceId == challenge.MobileDeviceId)
+                .ExecuteUpdateAsync(
+                    setters => setters.SetProperty(code => code.UsedAt, now),
+                    cancellationToken);
+            if (consumedChallenge != 1 || consumedCode != 1)
+            {
+                throw new InvalidDeviceChallengeException();
+            }
 
-        var device = await _db.MobileDevices
-            .FirstAsync(item => item.Id == challenge.MobileDeviceId, cancellationToken);
-        device.ProofVerifiedAt = now;
-        device.UpdatedAt = now;
-        if (_options.CurrentValue.AutoApproveWithActivationCode)
-        {
-            device.Status = DeviceRegistrationStatus.Approved;
-            device.ApprovedAt = now;
-            device.ApprovedByAuthUserId = challenge.ActivationCode.CreatedByAuthUserId;
-        }
+            var device = await _db.MobileDevices
+                .FirstAsync(item => item.Id == challenge.MobileDeviceId, cancellationToken);
+            device.ProofVerifiedAt = now;
+            device.UpdatedAt = now;
+            if (_options.CurrentValue.AutoApproveWithActivationCode)
+            {
+                device.Status = DeviceRegistrationStatus.Approved;
+                device.ApprovedAt = now;
+                device.ApprovedByAuthUserId = challenge.ActivationCode.CreatedByAuthUserId;
+            }
 
-        await _db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            await _db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
 
-        return new DeviceEnrollmentResponse(
-            device.Id,
-            device.InstallationId,
-            device.Status.ToString().ToLowerInvariant(),
-            device.ProofVerifiedAt.Value);
+            return new DeviceEnrollmentResponse(
+                device.Id,
+                device.InstallationId,
+                device.Status.ToString().ToLowerInvariant(),
+                device.ProofVerifiedAt.Value);
+        });
     }
 
     public async Task<DeviceLoginChallengeResponse> CreateLoginChallengeAsync(
@@ -269,10 +333,18 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
                 item => item.InstallationId == installationId,
                 cancellationToken);
         return device is null
-            ? new DeviceStatusResponse(false, "not_registered", null, null)
+            ? new DeviceStatusResponse(
+                false,
+                "not_registered",
+                "not_registered",
+                false,
+                null,
+                null)
             : new DeviceStatusResponse(
                 true,
                 device.Status.ToString().ToLowerInvariant(),
+                GetEnrollmentState(device),
+                device.ProofVerifiedAt is not null,
                 device.ApprovedAt,
                 device.RevokedAt);
     }
@@ -490,51 +562,55 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
             : configuredExpiry;
         var rawToken = RandomToken(32);
 
-        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
-        if (loginGrantHash is not null)
+        var executionStrategy = _db.Database.CreateExecutionStrategy();
+        return await executionStrategy.ExecuteAsync(async () =>
         {
-            var consumed = await _db.DeviceLoginGrants
-                .Where(grant =>
-                    grant.ChallengeTokenHash == loginGrantHash &&
-                    grant.MobileDeviceId == authorization.DeviceId &&
-                    grant.UsedAt == null &&
-                    grant.ExpiresAt > now)
-                .ExecuteUpdateAsync(
-                    setters => setters.SetProperty(grant => grant.UsedAt, now),
-                    cancellationToken);
-            if (consumed != 1)
+            await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+            if (loginGrantHash is not null)
             {
-                throw new InvalidDeviceLoginGrantException();
+                var consumed = await _db.DeviceLoginGrants
+                    .Where(grant =>
+                        grant.ChallengeTokenHash == loginGrantHash &&
+                        grant.MobileDeviceId == authorization.DeviceId &&
+                        grant.UsedAt == null &&
+                        grant.ExpiresAt > now)
+                    .ExecuteUpdateAsync(
+                        setters => setters.SetProperty(grant => grant.UsedAt, now),
+                        cancellationToken);
+                if (consumed != 1)
+                {
+                    throw new InvalidDeviceLoginGrantException();
+                }
             }
-        }
 
-        await _db.DeviceSessions
-            .Where(session =>
-                session.MobileDeviceId == authorization.DeviceId &&
-                session.RevokedAt == null)
-            .ExecuteUpdateAsync(
-                setters => setters.SetProperty(session => session.RevokedAt, now),
-                cancellationToken);
+            await _db.DeviceSessions
+                .Where(session =>
+                    session.MobileDeviceId == authorization.DeviceId &&
+                    session.RevokedAt == null)
+                .ExecuteUpdateAsync(
+                    setters => setters.SetProperty(session => session.RevokedAt, now),
+                    cancellationToken);
 
-        var session = new DeviceSession
-        {
-            Id = Guid.NewGuid(),
-            MobileDeviceId = authorization.DeviceId,
-            AuthUserId = authUserId,
-            CompAuthSessionId = compAuthSessionId,
-            TokenHash = HashSecret(rawToken),
-            CreatedAt = now,
-            LastSeenAt = now,
-            ExpiresAt = expiresAt
-        };
-        _db.DeviceSessions.Add(session);
-        await _db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            var session = new DeviceSession
+            {
+                Id = Guid.NewGuid(),
+                MobileDeviceId = authorization.DeviceId,
+                AuthUserId = authUserId,
+                CompAuthSessionId = compAuthSessionId,
+                TokenHash = HashSecret(rawToken),
+                CreatedAt = now,
+                LastSeenAt = now,
+                ExpiresAt = expiresAt
+            };
+            _db.DeviceSessions.Add(session);
+            await _db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
 
-        var result = JsonNode.Parse(response.GetRawText())!.AsObject();
-        result["deviceSessionToken"] = rawToken;
-        result["deviceSessionExpiresAt"] = expiresAt;
-        return JsonSerializer.SerializeToElement(result);
+            var result = JsonNode.Parse(response.GetRawText())!.AsObject();
+            result["deviceSessionToken"] = rawToken;
+            result["deviceSessionExpiresAt"] = expiresAt;
+            return JsonSerializer.SerializeToElement(result);
+        });
     }
 
     private DeviceChallenge CreateChallenge(
@@ -581,6 +657,35 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
         var normalized = value?.Trim();
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
     }
+
+    private static bool CanResumeEnrollment(
+        MobileDevice device,
+        DeviceActivationCode activation,
+        DeviceEnrollmentChallengeRequest request,
+        string publicKeyFingerprint) =>
+        device.Status == DeviceRegistrationStatus.Pending &&
+        device.ProofVerifiedAt is null &&
+        device.TargetAuthUserId == activation.TargetAuthUserId &&
+        string.Equals(device.LoginHash, activation.LoginHash, StringComparison.Ordinal) &&
+        string.Equals(device.CompanyCode, activation.CompanyCode, StringComparison.Ordinal) &&
+        string.Equals(device.Platform, request.Platform, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(device.KeyAlgorithm, request.KeyAlgorithm, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(
+            device.PublicKeyFingerprint,
+            publicKeyFingerprint,
+            StringComparison.Ordinal);
+
+    private static string GetEnrollmentState(MobileDevice device) =>
+        device.Status switch
+        {
+            DeviceRegistrationStatus.Pending when device.ProofVerifiedAt is null =>
+                "awaiting_device_proof",
+            DeviceRegistrationStatus.Pending => "awaiting_administrator_approval",
+            DeviceRegistrationStatus.Approved => "approved",
+            DeviceRegistrationStatus.Rejected => "rejected",
+            DeviceRegistrationStatus.Revoked => "revoked",
+            _ => throw new InvalidOperationException("Unsupported device registration status.")
+        };
 
     private static bool TryReadString(
         JsonElement response,
@@ -651,6 +756,8 @@ public sealed record MobileDeviceLoginProofRequest(
 public sealed record DeviceStatusResponse(
     bool Registered,
     string Status,
+    string EnrollmentState,
+    bool ProofVerified,
     DateTimeOffset? ApprovedAt,
     DateTimeOffset? RevokedAt);
 

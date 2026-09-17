@@ -54,56 +54,60 @@ public sealed class MobilePushTokenService(
 
         var now = timeProvider.GetUtcNow();
         var tokenHash = DeviceSecurityService.HashSecret(token);
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-
-        // Firebase can rotate and reassign a registration token. Keep exactly one
-        // approved-device owner for each token so an old installation cannot remain targeted.
-        await db.MobilePushTokens
-            .Where(item =>
-                item.TokenHash == tokenHash &&
-                item.MobileDeviceId != device.Id)
-            .ExecuteDeleteAsync(cancellationToken);
-
-        var registration = await db.MobilePushTokens
-            .FirstOrDefaultAsync(
-                item => item.MobileDeviceId == device.Id,
-                cancellationToken);
-        if (registration is null)
+        var executionStrategy = db.Database.CreateExecutionStrategy();
+        return await executionStrategy.ExecuteAsync(async () =>
         {
-            registration = new MobilePushToken
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+            // Firebase can rotate and reassign a registration token. Keep exactly one
+            // approved-device owner for each token so an old installation cannot remain targeted.
+            await db.MobilePushTokens
+                .Where(item =>
+                    item.TokenHash == tokenHash &&
+                    item.MobileDeviceId != device.Id)
+                .ExecuteDeleteAsync(cancellationToken);
+
+            var registration = await db.MobilePushTokens
+                .FirstOrDefaultAsync(
+                    item => item.MobileDeviceId == device.Id,
+                    cancellationToken);
+            if (registration is null)
             {
-                MobileDeviceId = device.Id,
-                AuthUserId = authUserId,
-                Token = token,
-                TokenHash = tokenHash,
-                Platform = platform,
-                AppVersion = appVersion,
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-            db.MobilePushTokens.Add(registration);
-        }
-        else
-        {
-            registration.AuthUserId = authUserId;
-            registration.Token = token;
-            registration.TokenHash = tokenHash;
-            registration.Platform = platform;
-            registration.AppVersion = appVersion;
-            registration.UpdatedAt = now;
-        }
+                registration = new MobilePushToken
+                {
+                    MobileDeviceId = device.Id,
+                    AuthUserId = authUserId,
+                    Token = token,
+                    TokenHash = tokenHash,
+                    Platform = platform,
+                    AppVersion = appVersion,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                db.MobilePushTokens.Add(registration);
+            }
+            else
+            {
+                registration.AuthUserId = authUserId;
+                registration.Token = token;
+                registration.TokenHash = tokenHash;
+                registration.Platform = platform;
+                registration.AppVersion = appVersion;
+                registration.UpdatedAt = now;
+            }
 
-        device.AppVersion = appVersion ?? device.AppVersion;
-        device.UpdatedAt = now;
-        await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            device.AppVersion = appVersion ?? device.AppVersion;
+            device.UpdatedAt = now;
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
 
-        return new MobilePushTokenRegistrationResponse(
-            device.Id,
-            true,
-            platform,
-            appVersion,
-            registration.UpdatedAt);
+            return new MobilePushTokenRegistrationResponse(
+                device.Id,
+                true,
+                platform,
+                appVersion,
+                registration.UpdatedAt);
+        });
     }
 
     public async Task<MobilePushTokenRemovalResponse> RemoveAsync(
