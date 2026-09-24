@@ -26,6 +26,7 @@ public sealed record ServiceTokenResponseDto(
 
 public sealed class MobileLoginDto
 {
+    public string? Platform { get; set; }
     [Required, MaxLength(256)]
     public string Login { get; set; } = string.Empty;
 
@@ -43,6 +44,7 @@ public sealed class MobileLoginDto
 
 public class MobileTwoFactorSetupDto
 {
+    public string? Platform { get; set; }
     [Required, MaxLength(256)]
     public string Login { get; set; } = string.Empty;
 

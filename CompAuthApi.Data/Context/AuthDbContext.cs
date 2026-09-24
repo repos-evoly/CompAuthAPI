@@ -18,6 +18,7 @@ namespace CompAuthApi.Data.Context
 
         public DbSet<UserSecurity> UserSecurities => Set<UserSecurity>();
         public DbSet<Settings> Settings => Set<Settings>();
+        public DbSet<CompanyMobileAccessPolicy> CompanyMobileAccessPolicies => Set<CompanyMobileAccessPolicy>();
         public DbSet<UserSession> UserSessions => Set<UserSession>();
         public DbSet<GeoFenceSetting> GeoFenceSettings => Set<GeoFenceSetting>();
         public DbSet<GeoFenceCountryRule> GeoFenceCountryRules => Set<GeoFenceCountryRule>();

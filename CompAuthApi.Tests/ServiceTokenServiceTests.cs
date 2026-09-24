@@ -14,6 +14,17 @@ public sealed class ServiceTokenServiceTests : IDisposable
     private readonly RSA _rsa = RSA.Create(2048);
 
     [Fact]
+    public void IssueAndValidate_RepeatedRequestsWithSameKeySucceed()
+    {
+        var service = CreateService();
+        for (var i = 0; i < 10; i++)
+        {
+            var token = service.Issue(ValidRequest()).AccessToken;
+            Assert.Equal(ClientId, service.ValidateServiceToken(token).FindFirst("client_id")?.Value);
+        }
+    }
+
+    [Fact]
     public void Issue_ProducesAValidServiceIdentity()
     {
         var service = CreateService();

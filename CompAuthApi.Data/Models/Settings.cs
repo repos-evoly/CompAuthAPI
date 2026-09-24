@@ -10,6 +10,10 @@ namespace CompAuthApi.Data.Models
         public int Id { get; set; }
 
         public bool IsTwoFactorAuthEnabled { get; set; }
+        public bool RequireApprovedMobileDevice { get; set; } = true;
+        public int MobileAccessPolicyVersion { get; set; } = 1;
+        public string? MobileAccessPolicyUpdatedBy { get; set; }
+        public DateTimeOffset? MobileAccessPolicyUpdatedAt { get; set; }
         public bool IsRecaptchaEnabled { get; set; }
         public string? RecaptchaSiteKey { get; set; }  // Nullable
         public string? RecaptchaSecretKey { get; set; } // Nullable

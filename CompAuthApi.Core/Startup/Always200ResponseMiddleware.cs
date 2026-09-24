@@ -14,6 +14,7 @@ namespace CompAuthApi.Core.Startup
       "/swagger",
       "/notificationHub",
       "/api/service-auth",
+      "/api/settings/mobile-access",
       "/api/mobile-auth"
     };
 

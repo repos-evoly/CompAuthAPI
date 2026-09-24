@@ -54,7 +54,7 @@ public sealed class MobileAuthEndpoints : IEndpoints
             .RequireRateLimiting("mobile-auth-standard");
     }
 
-    private static async Task<IResult> Login(
+    internal static async Task<IResult> Login(
         CompAuthApiDbContext db,
         IConfiguration config,
         IGeoFenceService geoFenceService,
@@ -69,7 +69,7 @@ public sealed class MobileAuthEndpoints : IEndpoints
         }
 
         DeviceLoginAuthorization? deviceAuthorization = null;
-        if (deviceSecurity.IsEnabled)
+        if ((await deviceSecurity.GetLoginPolicyAsync(request.Login, httpContext.RequestAborted)).RequireApprovedDevice)
         {
             try
             {
@@ -140,7 +140,9 @@ public sealed class MobileAuthEndpoints : IEndpoints
             }
         }
 
-        return purpose is null ? result : Results.Json(response);
+        if (purpose is not null) return Results.Json(response);
+        return await CompletePasswordResultAsync(result, deviceSecurity, request.DeviceId,
+            request.Platform, request.Login, httpContext.RequestAborted);
     }
 
     private static async Task<IResult> SetupTwoFactor(
@@ -156,7 +158,7 @@ public sealed class MobileAuthEndpoints : IEndpoints
             return InvalidChallenge();
         }
 
-        if (deviceSecurity.IsEnabled)
+        if ((await deviceSecurity.GetLoginPolicyAsync(request.Login, cancellationToken)).RequireApprovedDevice)
         {
             try
             {
@@ -178,7 +180,7 @@ public sealed class MobileAuthEndpoints : IEndpoints
             new EnableTwoFactorDto { Login = request.Login.Trim() });
     }
 
-    private static async Task<IResult> VerifyTwoFactor(
+    internal static async Task<IResult> VerifyTwoFactor(
         CompAuthApiDbContext db,
         IConfiguration config,
         IGeoFenceService geoFenceService,
@@ -198,7 +200,7 @@ public sealed class MobileAuthEndpoints : IEndpoints
         }
 
         DeviceLoginAuthorization? deviceAuthorization = null;
-        if (deviceSecurity.IsEnabled)
+        if ((await deviceSecurity.GetLoginPolicyAsync(request.Login, httpContext.RequestAborted)).RequireApprovedDevice)
         {
             try
             {
@@ -252,7 +254,7 @@ public sealed class MobileAuthEndpoints : IEndpoints
         }
 
         DeviceLoginAuthorization? deviceAuthorization = null;
-        if (deviceSecurity.IsEnabled)
+        if ((await deviceSecurity.GetLoginPolicyAsync(request.Login, httpContext.RequestAborted)).RequireApprovedDevice)
         {
             try
             {
@@ -387,7 +389,10 @@ public sealed class MobileAuthEndpoints : IEndpoints
         MobileVerifyTwoFactorDto request,
         CancellationToken cancellationToken)
     {
-        if (authorization is null || !TryReadResult(result, out var response))
+        if (authorization is null)
+            return await CompletePasswordResultAsync(result, deviceSecurity, request.DeviceId,
+                request.Platform, request.Login, cancellationToken);
+        if (!TryReadResult(result, out var response))
         {
             return result;
         }
@@ -408,8 +413,24 @@ public sealed class MobileAuthEndpoints : IEndpoints
         }
     }
 
+    private static async Task<IResult> CompletePasswordResultAsync(
+        IResult result, IDeviceSecurityService service, string installationId,
+        string? platform, string login, CancellationToken cancellationToken)
+    {
+        if (!TryReadResult(result, out var response) || response["accessToken"] is null) return result;
+        try
+        {
+            return Results.Json(await service.CompletePasswordLoginAsync(
+                installationId, platform ?? string.Empty, login,
+                JsonSerializer.SerializeToElement(response, WebJson), cancellationToken));
+        }
+        catch (Exception exception) { return MapDeviceException(exception); }
+    }
+
     private static IResult MapDeviceException(Exception exception) => exception switch
     {
+        InactiveMobileUserException => DeviceProblem(403, "account_disabled", "This account is not active."),
+        InvalidPushTokenException => DeviceProblem(400, "invalid_platform", "A supported mobile platform is required."),
         DeviceProofRequiredException => DeviceProblem(401, "device_proof_required", "An approved-device proof is required."),
         InvalidDeviceChallengeException => DeviceProblem(401, "invalid_device_challenge", "The device challenge is invalid or expired."),
         InvalidDeviceProofException => DeviceProblem(401, "invalid_device_proof", "Device ownership could not be verified."),

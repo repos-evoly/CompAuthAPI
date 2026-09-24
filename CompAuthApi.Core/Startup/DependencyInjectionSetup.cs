@@ -47,6 +47,7 @@ namespace CompAuthApi.Core.Startup
         .AddOptions<DeviceSecurityOptions>()
         .Bind(builder.Configuration.GetSection(DeviceSecurityOptions.SectionName));
       builder.Services.AddScoped<IDeviceSecurityService, DeviceSecurityService>();
+      builder.Services.AddHttpContextAccessor();
       builder.Services.AddScoped<IDeviceAdministrationService, DeviceAdministrationService>();
       builder.Services.AddScoped<IDeviceAttestationValidator, DeviceAttestationValidator>();
       builder.Services.AddScoped<IMobilePushTokenService, MobilePushTokenService>();

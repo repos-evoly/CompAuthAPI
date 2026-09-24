@@ -209,7 +209,7 @@ public sealed class ServiceTokenService : IServiceTokenService, IMobileAuthChall
             new TokenValidationParameters
             {
                 ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new RsaSecurityKey(rsa),
+                IssuerSigningKey = CreateOperationKey(rsa),
                 RequireSignedTokens = true,
                 ValidAlgorithms = new[] { SecurityAlgorithms.RsaSha256 },
                 ValidateIssuer = true,
@@ -240,13 +240,23 @@ public sealed class ServiceTokenService : IServiceTokenService, IMobileAuthChall
             NotBefore = issuedAt.UtcDateTime,
             Expires = expiresAt.UtcDateTime,
             SigningCredentials = new SigningCredentials(
-                new RsaSecurityKey(rsa),
+                CreateOperationKey(rsa),
                 SecurityAlgorithms.RsaSha256)
         };
 
         var handler = new JwtSecurityTokenHandler();
         return handler.WriteToken(handler.CreateToken(descriptor));
     }
+
+    // RSA is disposed at the end of each operation. A cached signature
+    // provider would retain that disposed RSA and break subsequent requests.
+    private static RsaSecurityKey CreateOperationKey(RSA rsa) => new(rsa)
+    {
+        CryptoProviderFactory = new CryptoProviderFactory
+        {
+            CacheSignatureProviders = false
+        }
+    };
 
     private static RSA LoadRsa(string pem)
     {

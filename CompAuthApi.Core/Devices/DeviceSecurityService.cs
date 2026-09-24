@@ -12,6 +12,9 @@ namespace CompAuthApi.Core.Devices;
 public interface IDeviceSecurityService
 {
     bool IsEnabled { get; }
+    Task<MobileAccessPolicy> GetLoginPolicyAsync(string login, CancellationToken cancellationToken);
+    Task<JsonElement> CompletePasswordLoginAsync(string installationId, string platform,
+        string login, JsonElement response, CancellationToken cancellationToken);
     Task<DeviceEnrollmentChallengeResponse> CreateEnrollmentChallengeAsync(
         DeviceEnrollmentChallengeRequest request,
         CancellationToken cancellationToken);
@@ -74,6 +77,45 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
     }
 
     public bool IsEnabled => _options.CurrentValue.Enabled;
+
+    public Task<MobileAccessPolicy> GetLoginPolicyAsync(string login, CancellationToken cancellationToken) =>
+        MobileAccessPolicyReader.ReadAsync(_db, cancellationToken);
+
+    public async Task<JsonElement> CompletePasswordLoginAsync(
+        string installationId, string platform, string login, JsonElement response,
+        CancellationToken cancellationToken)
+    {
+        EnsureEnabled();
+        if (!TryReadString(response, "accessToken", out var token) ||
+            !TryReadString(response, "sessionId", out _) ||
+            !DeviceUserAccessToken.TryGetUserId(token, out var userId)) return response;
+        if ((await MobileAccessPolicyReader.ReadAsync(_db, cancellationToken)).RequireApprovedDevice)
+            throw new DeviceProofRequiredException();
+        if (!await _db.Users.AnyAsync(user => user.Id == userId && user.Active, cancellationToken))
+            throw new InactiveMobileUserException();
+        platform = MobilePushTokenService.NormalizePlatform(platform);
+        // Separate password-only installations from enrolled cryptographic identities.
+        // Never change an enrolled device's owner, key, or approval status.
+        var id = "pwd-" + HashSecret($"{userId}:{installationId}")[..60];
+        var device = await _db.MobileDevices.FirstOrDefaultAsync(
+            item => item.InstallationId == id, cancellationToken);
+        if (device is null)
+        {
+            device = new MobileDevice
+            {
+                Id = Guid.NewGuid(), InstallationId = id, TargetAuthUserId = userId,
+                LoginHash = HashLogin(login), Platform = platform, KeyAlgorithm = "password-session",
+                CreatedAt = _timeProvider.GetUtcNow(), UpdatedAt = _timeProvider.GetUtcNow()
+            };
+            _db.MobileDevices.Add(device);
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        if (device.Status is DeviceRegistrationStatus.Revoked or DeviceRegistrationStatus.Rejected)
+            throw new DeviceNotApprovedException();
+        return await CreateDeviceSessionFromAuthResponseAsync(
+            new DeviceLoginAuthorization(device.Id, id, userId), response, null,
+            cancellationToken, approvedDeviceAuthenticated: false);
+    }
 
     public async Task<DeviceEnrollmentChallengeResponse> CreateEnrollmentChallengeAsync(
         DeviceEnrollmentChallengeRequest request,
@@ -500,13 +542,18 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
                 item.TokenHash == tokenHash &&
                 item.RevokedAt == null &&
                 item.ExpiresAt > now &&
-                item.MobileDevice.Status == DeviceRegistrationStatus.Approved,
+                item.MobileDevice.Status != DeviceRegistrationStatus.Revoked &&
+                item.MobileDevice.Status != DeviceRegistrationStatus.Rejected,
                 cancellationToken);
         if (session is null ||
             (expectedAuthUserId.HasValue && session.AuthUserId != expectedAuthUserId.Value))
         {
             throw new InvalidDeviceSessionException();
         }
+
+        var requireApproval = (await MobileAccessPolicyReader.ReadAsync(_db, cancellationToken)).RequireApprovedDevice;
+        if (requireApproval && (!session.ApprovedDeviceAuthenticated || session.MobileDevice.Status != DeviceRegistrationStatus.Approved))
+            throw new InvalidDeviceSessionException();
 
         return new ValidatedDeviceSession(
             session.Id,
@@ -539,7 +586,8 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
         DeviceLoginAuthorization authorization,
         JsonElement response,
         string? loginGrantHash,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool approvedDeviceAuthenticated = true)
     {
         if (!TryReadString(response, "accessToken", out var accessToken) ||
             !TryReadString(response, "sessionId", out var compAuthSessionId) ||
@@ -596,6 +644,7 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
                 Id = Guid.NewGuid(),
                 MobileDeviceId = authorization.DeviceId,
                 AuthUserId = authUserId,
+                ApprovedDeviceAuthenticated = approvedDeviceAuthenticated,
                 CompAuthSessionId = compAuthSessionId,
                 TokenHash = HashSecret(rawToken),
                 CreatedAt = now,
@@ -774,6 +823,7 @@ public sealed record ValidatedDeviceSession(
     DateTimeOffset ExpiresAt);
 
 public sealed class DeviceSecurityDisabledException : Exception;
+public sealed class InactiveMobileUserException : Exception;
 public sealed class InvalidActivationCodeException : Exception;
 public sealed class DeviceEnrollmentConflictException : Exception;
 public sealed class InvalidDevicePublicKeyException : Exception;

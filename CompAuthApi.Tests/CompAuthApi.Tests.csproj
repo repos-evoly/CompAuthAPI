@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CompAuthApi.Core\CompAuthApi.Core.csproj" />
+    <ProjectReference Include="..\CompAuthApi\CompAuthApi.csproj" />
   </ItemGroup>
 
 </Project>

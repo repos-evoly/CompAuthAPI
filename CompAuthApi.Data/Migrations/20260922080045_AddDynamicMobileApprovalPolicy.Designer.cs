@@ -4,6 +4,7 @@ using CompAuthApi.Data.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CompAuthApi.Data.Migrations
 {
     [DbContext(typeof(CompAuthApiDbContext))]
-    partial class CompAuthApiDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260922080045_AddDynamicMobileApprovalPolicy")]
+    partial class AddDynamicMobileApprovalPolicy
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -21,29 +24,6 @@ namespace CompAuthApi.Data.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
-
-            modelBuilder.Entity("CompAuthApi.Data.Models.CompanyMobileAccessPolicy", b =>
-                {
-                    b.Property<string>("CompanyCode")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<int>("PolicyVersion")
-                        .HasColumnType("int");
-
-                    b.Property<bool>("RequireApprovedDevice")
-                        .HasColumnType("bit");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<int>("UpdatedByAuthUserId")
-                        .HasColumnType("int");
-
-                    b.HasKey("CompanyCode");
-
-                    b.ToTable("CompanyMobileAccessPolicies");
-                });
 
             modelBuilder.Entity("CompAuthApi.Data.Models.DeviceActivationCode", b =>
                 {

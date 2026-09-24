@@ -29,7 +29,10 @@ namespace CompAuthApi.Endpoints
         private const string DeviceCookieName = "authDeviceId";
         private const int AbsoluteSessionMinutes = 180;
         private const int IdleSessionMinutes = 5;
-        private const int HeartbeatIntervalMinutes = 5;
+        // Keep the heartbeat comfortably inside the five-minute idle window.
+        // Using the same value as the idle timeout makes ordinary timer and
+        // network jitter expire otherwise healthy browser sessions.
+        private const int HeartbeatIntervalMinutes = 2;
         private const int DefaultMaxLoginAttempts = 5;
         private const int DefaultLockTimeoutMinutes = 120;
 

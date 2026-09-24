@@ -17,6 +17,7 @@ public sealed class DeviceSession
     public MobileDevice MobileDevice { get; set; } = null!;
 
     public int AuthUserId { get; set; }
+    public bool ApprovedDeviceAuthenticated { get; set; } = true;
 
     [Required, MaxLength(64)]
     public string CompAuthSessionId { get; set; } = string.Empty;

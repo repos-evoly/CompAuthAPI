@@ -159,6 +159,7 @@ public sealed class MobilePushTokenService(
         CancellationToken cancellationToken)
     {
         EnsureEnabled();
+        var requireApproval = (await MobileAccessPolicyReader.ReadAsync(db, cancellationToken)).RequireApprovedDevice;
         var requestedUserIds = authUserIds
             .Where(id => id > 0)
             .Distinct()
@@ -178,7 +179,9 @@ public sealed class MobilePushTokenService(
                     on registration.AuthUserId equals user.Id
                 where requestedUserIds.Contains(registration.AuthUserId) &&
                       device.TargetAuthUserId == registration.AuthUserId &&
-                      device.Status == DeviceRegistrationStatus.Approved &&
+                      (device.Status == DeviceRegistrationStatus.Approved ||
+                       (!requireApproval && device.Status == DeviceRegistrationStatus.Pending &&
+                        device.KeyAlgorithm == "password-session")) &&
                       user.Active
                 select new MobilePushTargetResponse(
                     registration.AuthUserId,
@@ -213,13 +216,18 @@ public sealed class MobilePushTokenService(
     private async Task<MobileDevice> FindApprovedDeviceAsync(
         int authUserId,
         Guid deviceId,
-        CancellationToken cancellationToken) =>
-        await db.MobileDevices.FirstOrDefaultAsync(
+        CancellationToken cancellationToken)
+    {
+        var requireApproval = (await MobileAccessPolicyReader.ReadAsync(db, cancellationToken)).RequireApprovedDevice;
+        return await db.MobileDevices.FirstOrDefaultAsync(
             device =>
                 device.Id == deviceId &&
                 device.TargetAuthUserId == authUserId &&
-                device.Status == DeviceRegistrationStatus.Approved,
+                (device.Status == DeviceRegistrationStatus.Approved ||
+                 (!requireApproval && device.Status == DeviceRegistrationStatus.Pending &&
+                  device.KeyAlgorithm == "password-session")),
             cancellationToken) ?? throw new PushDeviceNotApprovedException();
+    }
 
     public static string NormalizeAndValidateToken(string? value)
     {
