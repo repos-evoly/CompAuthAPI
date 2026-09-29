@@ -410,3 +410,6 @@ KycApi/Attachments/
 
 # GeoIP database files
 GeoLite2-Country_*/
+
+# Local production configuration contains deployment secrets.
+**/appsettings.Production.json
