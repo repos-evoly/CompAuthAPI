@@ -18,6 +18,7 @@ namespace CompAuthApi.Data.Context
 
         public DbSet<UserSecurity> UserSecurities => Set<UserSecurity>();
         public DbSet<Settings> Settings => Set<Settings>();
+        public DbSet<MobileAppUpdatePolicy> MobileAppUpdatePolicies => Set<MobileAppUpdatePolicy>();
         public DbSet<CompanyMobileAccessPolicy> CompanyMobileAccessPolicies => Set<CompanyMobileAccessPolicy>();
         public DbSet<UserSession> UserSessions => Set<UserSession>();
         public DbSet<GeoFenceSetting> GeoFenceSettings => Set<GeoFenceSetting>();
@@ -41,6 +42,11 @@ namespace CompAuthApi.Data.Context
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
+
+            builder.Entity<MobileAppUpdatePolicy>().Property(p => p.Revision).IsConcurrencyToken();
+            builder.Entity<MobileAppUpdatePolicy>().HasData(
+                new MobileAppUpdatePolicy { Platform = "android", StoreUrl = "https://play.google.com/store/apps/details?id=com.bcd.companygateway" },
+                new MobileAppUpdatePolicy { Platform = "ios" });
 
             builder.Entity<User>().HasIndex(u => u.Email).IsUnique().HasDatabaseName("Unique_Email");
 

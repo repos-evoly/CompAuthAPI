@@ -302,6 +302,80 @@ namespace CompAuthApi.Data.Migrations
                     b.ToTable("GeoFenceSettings");
                 });
 
+            modelBuilder.Entity("CompAuthApi.Data.Models.MobileAppUpdatePolicy", b =>
+                {
+                    b.Property<string>("Platform")
+                        .HasMaxLength(7)
+                        .HasColumnType("nvarchar(7)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("MessageAr")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("MessageEn")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("MinimumBuild")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("MinimumVersion")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<int>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
+                    b.Property<string>("StoreUrl")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Platform");
+
+                    b.ToTable("MobileAppUpdatePolicies");
+
+                    b.HasData(
+                        new
+                        {
+                            Platform = "android",
+                            Enabled = false,
+                            MessageAr = "يرجى تحديث التطبيق للمتابعة.",
+                            MessageEn = "Please update the app to continue.",
+                            MinimumBuild = "0",
+                            MinimumVersion = "1.0.0",
+                            Revision = 1,
+                            StoreUrl = "https://play.google.com/store/apps/details?id=com.bcd.companygateway"
+                        },
+                        new
+                        {
+                            Platform = "ios",
+                            Enabled = false,
+                            MessageAr = "يرجى تحديث التطبيق للمتابعة.",
+                            MessageEn = "Please update the app to continue.",
+                            MinimumBuild = "0",
+                            MinimumVersion = "1.0.0",
+                            Revision = 1,
+                            StoreUrl = ""
+                        });
+                });
+
             modelBuilder.Entity("CompAuthApi.Data.Models.MobileDevice", b =>
                 {
                     b.Property<Guid>("Id")
