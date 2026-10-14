@@ -16,6 +16,7 @@ namespace CompAuthApi.Core.Startup
       "/api/service-auth",
       "/api/settings/mobile-access",
       "/api/settings/mobile-app-updates",
+      "/api/settings/mobile-app-maintenance",
       "/api/mobile-auth"
     };
 

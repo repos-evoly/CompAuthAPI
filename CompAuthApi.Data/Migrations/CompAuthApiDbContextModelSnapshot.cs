@@ -302,6 +302,53 @@ namespace CompAuthApi.Data.Migrations
                     b.ToTable("GeoFenceSettings");
                 });
 
+            modelBuilder.Entity("CompAuthApi.Data.Models.MobileAppMaintenancePolicy", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("MessageAr")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("MessageEn")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("MobileAppMaintenancePolicy", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_MobileAppMaintenancePolicy_Singleton", "[Id] = 1");
+                        });
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Enabled = false,
+                            MessageAr = "التطبيق غير متاح مؤقتاً للصيانة. يرجى المحاولة لاحقاً.",
+                            MessageEn = "The app is temporarily unavailable for maintenance. Please try again later.",
+                            Revision = 1
+                        });
+                });
+
             modelBuilder.Entity("CompAuthApi.Data.Models.MobileAppUpdatePolicy", b =>
                 {
                     b.Property<string>("Platform")
