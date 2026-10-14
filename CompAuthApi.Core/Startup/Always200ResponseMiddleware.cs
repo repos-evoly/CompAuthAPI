@@ -15,6 +15,7 @@ namespace CompAuthApi.Core.Startup
       "/notificationHub",
       "/api/service-auth",
       "/api/settings/mobile-access",
+      "/api/settings/mobile-app-updates",
       "/api/mobile-auth"
     };
 
@@ -26,7 +27,8 @@ namespace CompAuthApi.Core.Startup
     public async Task Invoke(HttpContext context)
     {
       var path = context.Request.Path.Value ?? string.Empty;
-      if (_skipPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
+      if (path.TrimEnd('/').Equals("/api/auth/refresh-token", StringComparison.OrdinalIgnoreCase) ||
+          _skipPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
       {
         await _next(context);
         return;
