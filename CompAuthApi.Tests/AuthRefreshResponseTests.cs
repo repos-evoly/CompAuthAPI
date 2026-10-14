@@ -13,6 +13,8 @@ public sealed class AuthRefreshResponseTests
     [InlineData("/api/auth/refresh-token", 500)]
     [InlineData("/api/mobile-auth/refresh-token", 401)]
     [InlineData("/api/settings/mobile-app-updates", 403)]
+    [InlineData("/api/settings/mobile-app-maintenance", 403)]
+    [InlineData("/api/settings/mobile-app-maintenance", 409)]
     public async Task AuthRefreshAndMobilePolicyFailuresKeepRealStatus(string path, int status)
     {
         var context = new DefaultHttpContext();

@@ -19,6 +19,7 @@ namespace CompAuthApi.Data.Context
         public DbSet<UserSecurity> UserSecurities => Set<UserSecurity>();
         public DbSet<Settings> Settings => Set<Settings>();
         public DbSet<MobileAppUpdatePolicy> MobileAppUpdatePolicies => Set<MobileAppUpdatePolicy>();
+        public DbSet<MobileAppMaintenancePolicy> MobileAppMaintenancePolicies => Set<MobileAppMaintenancePolicy>();
         public DbSet<CompanyMobileAccessPolicy> CompanyMobileAccessPolicies => Set<CompanyMobileAccessPolicy>();
         public DbSet<UserSession> UserSessions => Set<UserSession>();
         public DbSet<GeoFenceSetting> GeoFenceSettings => Set<GeoFenceSetting>();
@@ -42,6 +43,12 @@ namespace CompAuthApi.Data.Context
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
+
+            builder.Entity<MobileAppMaintenancePolicy>().ToTable("MobileAppMaintenancePolicy",
+                table => table.HasCheckConstraint("CK_MobileAppMaintenancePolicy_Singleton", "[Id] = 1"));
+            builder.Entity<MobileAppMaintenancePolicy>().Property(p => p.Id).ValueGeneratedNever();
+            builder.Entity<MobileAppMaintenancePolicy>().Property(p => p.Revision).IsConcurrencyToken();
+            builder.Entity<MobileAppMaintenancePolicy>().HasData(new MobileAppMaintenancePolicy());
 
             builder.Entity<MobileAppUpdatePolicy>().Property(p => p.Revision).IsConcurrencyToken();
             builder.Entity<MobileAppUpdatePolicy>().HasData(
