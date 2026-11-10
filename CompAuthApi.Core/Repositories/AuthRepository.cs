@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -6,6 +6,8 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using CompAuthApi.Core.Abstractions;
+using CompAuthApi.Core.Authentication;
+using QRCoder;
 using CompAuthApi.Core.Dtos;
 using CompAuthApi.Data.Context;
 using CompAuthApi.Data.Models;
@@ -125,44 +127,13 @@ namespace CompAuthApi.Data.Repositories
         // ---------------- Enable 2FA ----------------
         public async Task<Enable2FAResult> EnableTwoFactorAuthentication(EnableTwoFactorDto dto)
         {
-            var user = await _db.Users
-                .Include(u => u.UserSecurity)
-                .FirstOrDefaultAsync(u => u.Email == dto.Login || u.Username == dto.Login);
-
-            if (user == null)
-                return new Enable2FAResult(false, null, null, null, "User not found.");
-
-            byte[] secretKeyBytes = KeyGeneration.GenerateRandomKey(20);
-            string base32Secret = Base32Encoding.ToString(secretKeyBytes).TrimEnd('=');
-
-            string qrFile = await _qrRepo.GenerateAndSaveQrCodeAsync(user.Email, base32Secret);
-            var qrBytes = await _qrRepo.GetQrCodeAsync(qrFile);
-            string? qrBase64 = (qrBytes != null && qrBytes.Length > 0)
-                ? Convert.ToBase64String(qrBytes)
-                : null;
-
-            if (user.UserSecurity == null)
-            {
-                user.UserSecurity = new UserSecurity
-                {
-                    UserId = user.Id,
-                    TwoFactorSecretKey = base32Secret,
-                    IsTwoFactorEnabled = false,
-                    PasswordResetToken = null,
-                    PasswordResetTokenExpiry = null
-                };
-                _db.UserSecurities.Add(user.UserSecurity);
-            }
-            else
-            {
-                user.UserSecurity.TwoFactorSecretKey = base32Secret;
-                user.UserSecurity.IsTwoFactorEnabled = false;
-            }
-
-            await _db.SaveChangesAsync();
-            return new Enable2FAResult(true, base32Secret, $"/attachments/{qrFile}",
-                qrBase64 != null ? $"data:image/png;base64,{qrBase64}" : null,
-                null);
+            var setup = await new AuthenticatorRecoveryService(_db).PrepareSetupAsync(dto.Login, dto.SetupToken);
+            if (setup == null) return new Enable2FAResult(false, null, null, null, "Sign in again to begin authenticator setup.");
+            var uri = $"otpauth://totp/{Uri.EscapeDataString("CompAuthApi:" + setup.Email)}?secret={setup.Secret}&issuer=CompAuthApi";
+            using var generator = new QRCodeGenerator();
+            using var data = generator.CreateQrCode(uri, QRCodeGenerator.ECCLevel.Q);
+            using var qr = new PngByteQRCode(data);
+            return new Enable2FAResult(true, setup.Secret, null, "data:image/png;base64," + Convert.ToBase64String(qr.GetGraphic(10)), null);
         }
 
         // ---------------- Verify Initial 2FA Setup ----------------
@@ -179,7 +150,7 @@ namespace CompAuthApi.Data.Repositories
             if (string.IsNullOrEmpty(user.UserSecurity.TwoFactorSecretKey))
                 return new Verify2FAResult(false, null, null, "2FA secret key is missing.");
 
-            if (!VerifyOtp(dto.Token, user.UserSecurity.TwoFactorSecretKey))
+            if (!await new AuthenticatorRecoveryService(_db).ConsumeLoginCodeAsync(user.Id, dto.Token, initial: true))
                 return new Verify2FAResult(false, null, null, "Invalid OTP. Please scan and try again.");
 
             user.UserSecurity.IsTwoFactorEnabled = true;
@@ -208,7 +179,7 @@ namespace CompAuthApi.Data.Repositories
             if (string.IsNullOrEmpty(user.UserSecurity.TwoFactorSecretKey))
                 return new Verify2FAResult(false, null, null, "2FA secret key is missing.");
 
-            if (!VerifyOtp(dto.Token, user.UserSecurity.TwoFactorSecretKey))
+            if (!await new AuthenticatorRecoveryService(_db).ConsumeLoginCodeAsync(user.Id, dto.Token, initial: false))
                 return new Verify2FAResult(false, null, null, "Invalid OTP. Please try again.");
 
             var accessToken = GenerateJwtTokenForCompAuthApi(user);
@@ -222,108 +193,13 @@ namespace CompAuthApi.Data.Repositories
         }
 
         // ---------------- Forgot Password (code only) ----------------
-        public async Task<(bool Ok, string Message)> ForgotPassword(ForgotPasswordDto dto)
-        {
-            var user = await _db.Users
-                .Include(u => u.UserSecurity)
-                .FirstOrDefaultAsync(u => u.Email == dto.Email);
+        public Task<(bool Ok, string Message)> ForgotPassword(ForgotPasswordDto dto) =>
+            Task.FromResult((false, "Use authenticator-based password recovery on the updated website."));
+        public Task<(bool Sent, string Message)> CustomerForgotPassword(ForgotPasswordDto dto) =>
+            Task.FromResult((false, "Use authenticator-based password recovery on the updated website."));
+        public Task<(bool Ok, string Message)> ResetPassword(ResetPasswordDto dto) =>
+            Task.FromResult((false, "Use authenticator-based password recovery on the updated website."));
 
-            if (user == null)
-                return (false, "User not found.");
-
-            user.UserSecurity ??= new UserSecurity { UserId = user.Id };
-            user.UserSecurity.PasswordResetToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(4));
-            user.UserSecurity.PasswordResetTokenExpiry = DateTime.Now.AddMinutes(300);
-            await _db.SaveChangesAsync();
-
-            return (true, "Password reset token sent.");
-        }
-
-        // ---------------- Forgot Password (customer e-mail send) ----------------
-        public async Task<(bool Sent, string Message)> CustomerForgotPassword(ForgotPasswordDto dto)
-        {
-            var user = await _db.Users
-                .Include(u => u.UserSecurity)
-                .FirstOrDefaultAsync(u => u.Email == dto.Email);
-
-            if (user is null)
-                return (false, "User not found.");
-
-            user.UserSecurity ??= new UserSecurity { UserId = user.Id };
-            user.UserSecurity.PasswordResetToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(4));
-            user.UserSecurity.PasswordResetTokenExpiry = DateTime.UtcNow.AddMinutes(300);
-            await _db.SaveChangesAsync();
-
-            var resetBody = $"""
-            Hi {user.Username},
-
-            Your reset code is: {user.UserSecurity.PasswordResetToken}
-
-            This code will expire in 30 minutes.
-
-            If you did not request this, please ignore this e-mail.
-
-            — CompaniesGateway
-            """;
-
-            var message = new MimeMessage();
-            message.From.Add(new MailboxAddress("Companies Gateway", "OTP.info@bcd.ly"));
-            message.To.Add(MailboxAddress.Parse(dto.Email));
-            message.Subject = "Your password reset code";
-            message.Date = DateTimeOffset.UtcNow;
-            message.MessageId = MimeUtils.GenerateMessageId("bcd.ly");
-            message.Body = new TextPart("plain") { Text = resetBody };
-
-            const string smtpHost = "d303874.o.ess.barracudanetworks.com";
-            const int smtpPort = 25;
-            const bool useStartTls = true;
-            const string smtpUser = "comp.info@bcd.ly";
-            const string smtpPassword = ""; // same behavior as before
-
-            using var smtp = new SmtpClient { Timeout = 10_000 };
-            try
-            {
-                await smtp.ConnectAsync(
-                    smtpHost,
-                    smtpPort,
-                    useStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None
-                );
-
-                if (!string.IsNullOrWhiteSpace(smtpPassword))
-                    await smtp.AuthenticateAsync(smtpUser, smtpPassword);
-
-                await smtp.SendAsync(message);
-                await smtp.DisconnectAsync(true);
-                return (true, "Reset code sent to your e-mail.");
-            }
-            catch (Exception ex)
-            {
-                try { await smtp.DisconnectAsync(true); } catch { }
-                return (false, $"Failed to send reset e-mail. {ex.Message}");
-            }
-        }
-
-        // ---------------- Reset Password ----------------
-        public async Task<(bool Ok, string Message)> ResetPassword(ResetPasswordDto dto)
-        {
-            var user = await _db.Users
-                .Include(u => u.UserSecurity)
-                .FirstOrDefaultAsync(u =>
-                    u.UserSecurity!.PasswordResetToken == dto.PasswordToken &&
-                    u.UserSecurity.PasswordResetTokenExpiry > DateTime.Now);
-
-            if (user == null)
-                return (false, "Invalid or expired token.");
-
-            user.Password = BCrypt.Net.BCrypt.HashPassword(dto.Password);
-            user.UserSecurity!.PasswordResetToken = null;
-            user.UserSecurity.PasswordResetTokenExpiry = null;
-            await _db.SaveChangesAsync();
-
-            return (true, "Password reset successful.");
-        }
-
-        // ---------------- Logout ----------------
         public async Task<(bool Ok, string Message)> Logout(HttpContext httpContext)
         {
             var userIdClaim = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -419,17 +295,6 @@ namespace CompAuthApi.Data.Repositories
 
             var token = tokenHandler.CreateToken(tokenDescriptor);
             return tokenHandler.WriteToken(token);
-        }
-
-        private static bool VerifyOtp(string otp, string secretKey)
-        {
-            try
-            {
-                byte[] keyBytes = Base32Encoding.ToBytes(secretKey);
-                var totp = new Totp(keyBytes, step: 30, totpSize: 6, mode: OtpHashMode.Sha1);
-                return totp.VerifyTotp(otp, out _, new VerificationWindow(previous: 1, future: 1));
-            }
-            catch { return false; }
         }
 
         private static string GenerateRefreshToken()

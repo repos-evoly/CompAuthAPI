@@ -22,6 +22,66 @@ namespace CompAuthApi.Data.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("CompAuthApi.Data.Models.AuthenticatorActionGrant", b =>
+                {
+                    b.Property<string>("TokenHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime?>("ConsumedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ExpiresUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PasswordFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("SecretFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("TokenHash");
+
+                    b.HasIndex("UserId", "Purpose", "ExpiresUtc");
+
+                    b.ToTable("AuthenticatorActionGrants");
+                });
+
+            modelBuilder.Entity("CompAuthApi.Data.Models.AuthenticatorUsedStep", b =>
+                {
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.Property<long>("TimeStep")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<DateTime>("UsedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("UserId", "TimeStep");
+
+                    b.ToTable("AuthenticatorUsedSteps");
+                });
+
             modelBuilder.Entity("CompAuthApi.Data.Models.CompanyMobileAccessPolicy", b =>
                 {
                     b.Property<string>("CompanyCode")
@@ -562,6 +622,23 @@ namespace CompAuthApi.Data.Migrations
                     b.ToTable("MobilePushTokens");
                 });
 
+            modelBuilder.Entity("CompAuthApi.Data.Models.PasswordRecoveryThrottle", b =>
+                {
+                    b.Property<string>("KeyHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("WindowStartedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("KeyHash");
+
+                    b.ToTable("PasswordRecoveryThrottles");
+                });
+
             modelBuilder.Entity("CompAuthApi.Data.Models.Role", b =>
                 {
                     b.Property<int>("Id")
@@ -886,6 +963,28 @@ namespace CompAuthApi.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("UserSessions");
+                });
+
+            modelBuilder.Entity("CompAuthApi.Data.Models.AuthenticatorActionGrant", b =>
+                {
+                    b.HasOne("CompAuthApi.Data.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("CompAuthApi.Data.Models.AuthenticatorUsedStep", b =>
+                {
+                    b.HasOne("CompAuthApi.Data.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("CompAuthApi.Data.Models.DeviceChallenge", b =>

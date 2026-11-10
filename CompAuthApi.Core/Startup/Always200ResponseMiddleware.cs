@@ -17,7 +17,8 @@ namespace CompAuthApi.Core.Startup
       "/api/settings/mobile-access",
       "/api/settings/mobile-app-updates",
       "/api/settings/mobile-app-maintenance",
-      "/api/mobile-auth"
+      "/api/mobile-auth",
+      "/api/auth/password-recovery"
     };
 
     public Always200ResponseMiddleware(RequestDelegate next)

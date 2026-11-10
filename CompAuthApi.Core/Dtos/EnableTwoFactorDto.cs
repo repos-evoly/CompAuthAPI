@@ -6,5 +6,6 @@ namespace CompAuthApi.Core.Dtos
     {
         [Required]
         public string Login { get; set; } = "";
+        public string? SetupToken { get; set; }
     }
 }

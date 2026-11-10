@@ -14,6 +14,9 @@ namespace CompAuthApi.Data.Context
 
 
         public DbSet<User> Users => Set<User>();
+        public DbSet<AuthenticatorActionGrant> AuthenticatorActionGrants => Set<AuthenticatorActionGrant>();
+        public DbSet<AuthenticatorUsedStep> AuthenticatorUsedSteps => Set<AuthenticatorUsedStep>();
+        public DbSet<PasswordRecoveryThrottle> PasswordRecoveryThrottles => Set<PasswordRecoveryThrottle>();
         public DbSet<Role> Roles => Set<Role>();
 
         public DbSet<UserSecurity> UserSecurities => Set<UserSecurity>();

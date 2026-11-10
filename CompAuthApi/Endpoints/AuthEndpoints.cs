@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -13,6 +13,7 @@ using CompAuthApi.Data.Models;
 using CompAuthApi.Core.Dtos;
 using CompAuthApi.Abstractions;
 using CompAuthApi.Core.Abstractions;
+using CompAuthApi.Core.Authentication;
 using System.Net;
 using MailKit.Security;
 using MimeKit;
@@ -115,7 +116,7 @@ namespace CompAuthApi.Endpoints
                     u.Email == dto.Login ||
                     u.Username == dto.Login);
 
-            if (user == null)
+            if (user == null || !user.Active)
             {
                 return AuthError(
                     StatusCodes.Status401Unauthorized,
@@ -178,7 +179,8 @@ namespace CompAuthApi.Endpoints
                 await db.SaveChangesAsync();
 
                 if (!user.UserSecurity.IsTwoFactorEnabled)
-                    return TypedResults.Ok(new { RequiresTwoFactorEnable = true, DeviceId = requestedDeviceId });
+                    return TypedResults.Ok(new { RequiresTwoFactorEnable = true, DeviceId = requestedDeviceId,
+                        SetupToken = await new AuthenticatorRecoveryService(db).IssueSetupAsync(user.Id) });
 
                 return TypedResults.Ok(new { RequiresTwoFactor = true, DeviceId = requestedDeviceId });
             }
@@ -194,49 +196,25 @@ namespace CompAuthApi.Endpoints
       /// <summary> Enable Google Authenticator 2FA </summary>
         /// <summary> Enable Google Authenticator 2FA and save QR code </summary>
         public static async Task<IResult> EnableTwoFactorAuthentication(
-             CompAuthApiDbContext db,
-             IQrCodeRepository qrCodeRepository,
-             EnableTwoFactorDto dto)
+            CompAuthApiDbContext db, IQrCodeRepository qrCodeRepository, EnableTwoFactorDto dto) =>
+            SetupResponse(await new AuthenticatorRecoveryService(db).PrepareSetupAsync(dto.Login, dto.SetupToken));
+
+        // Only the mobile wrapper may call this after validating its signed,
+        // password-issued setup challenge and approved-device policy.
+        internal static async Task<IResult> EnableAuthorizedMobileTwoFactor(CompAuthApiDbContext db, string login) =>
+            SetupResponse(await new AuthenticatorRecoveryService(db).PrepareSetupAsync(login, null, verifiedMobile: true));
+
+        private static IResult SetupResponse(SetupSecret? setup)
         {
-            var user = await db.Users
-     .Include(u => u.UserSecurity)
-     .FirstOrDefaultAsync(u =>
-         u.Email == dto.Login
-      || u.Username == dto.Login);
-
-            if (user == null) return TypedResults.NotFound("User not found.");
-
-            using var generator = RandomNumberGenerator.Create();
-            byte[] secretKeyBytes = KeyGeneration.GenerateRandomKey(20);
-            string base32Secret = Base32Encoding.ToString(secretKeyBytes).TrimEnd('=');
-
-            string qrCodeFileName = await qrCodeRepository.GenerateAndSaveQrCodeAsync(user.Email, base32Secret);
-
-            if (user.UserSecurity == null)
-            {
-                user.UserSecurity = new UserSecurity
-                {
-                    UserId = user.Id,
-                    TwoFactorSecretKey = base32Secret,
-                    IsTwoFactorEnabled = false,  // 🚨 2FA is disabled until OTP is verified
-                    PasswordResetToken = null,
-                    PasswordResetTokenExpiry = null
-                };
-                db.UserSecurities.Add(user.UserSecurity);
-            }
-            else
-            {
-                user.UserSecurity.TwoFactorSecretKey = base32Secret;
-                user.UserSecurity.IsTwoFactorEnabled = false; // 🚨 2FA is disabled until OTP is verified
-            }
-
-            await db.SaveChangesAsync();
-
-            return TypedResults.Ok(new
-            {
-                SecretKey = base32Secret,
-                QrCodePath = $"/attachments/{qrCodeFileName}"
-            });
+            if (setup == null) return Results.Json(new { success = false,
+                message = "Authenticator setup is unavailable. Sign in again or contact support to reset enrollment." }, statusCode: 400);
+            var issuer = "CompAuthApi";
+            var uri = $"otpauth://totp/{Uri.EscapeDataString(issuer + ":" + setup.Email)}?secret={setup.Secret}&issuer={issuer}";
+            using var generator = new QRCodeGenerator();
+            using var data = generator.CreateQrCode(uri, QRCodeGenerator.ECCLevel.Q);
+            using var qr = new PngByteQRCode(data);
+            return Results.Ok(new { SecretKey = setup.Secret,
+                QrCodeImageBase64 = "data:image/png;base64," + Convert.ToBase64String(qr.GetGraphic(10)) });
         }
 
         public static async Task<IResult> VerifyInitialTwoFactorSetup(
@@ -259,7 +237,7 @@ namespace CompAuthApi.Endpoints
             if (string.IsNullOrEmpty(user.UserSecurity.TwoFactorSecretKey))
                 return TypedResults.BadRequest("2FA secret key is missing.");
 
-            bool isValidOtp = VerifyOtp(dto.Token, user.UserSecurity.TwoFactorSecretKey);
+            bool isValidOtp = await new AuthenticatorRecoveryService(db).ConsumeLoginCodeAsync(user.Id, dto.Token, initial: true);
 
             if (!isValidOtp)
                 return TypedResults.BadRequest("Invalid OTP. Please scan and try again.");
@@ -314,7 +292,7 @@ namespace CompAuthApi.Endpoints
             if (string.IsNullOrEmpty(user.UserSecurity.TwoFactorSecretKey))
                 return TypedResults.BadRequest("2FA secret key is missing.");
 
-            bool isValidOtp = VerifyOtp(dto.Token, user.UserSecurity.TwoFactorSecretKey);
+            bool isValidOtp = await new AuthenticatorRecoveryService(db).ConsumeLoginCodeAsync(user.Id, dto.Token, initial: false);
 
             if (!isValidOtp)
                 return TypedResults.BadRequest("Invalid OTP. Please try again.");
@@ -347,137 +325,14 @@ namespace CompAuthApi.Endpoints
 
 
         /// <summary> Forgot Password (Request Password Reset) </summary>
-        public static async Task<IResult> ForgotPassword(CompAuthApiDbContext db, ForgotPasswordDto dto)
-        {
-            var user = await db.Users.Include(u => u.UserSecurity).FirstOrDefaultAsync(u => u.Email == dto.Email);
-            if (user == null) return TypedResults.NotFound("User not found.");
+        private static Task<IResult> LegacyRecoveryDisabled() => Task.FromResult<IResult>(Results.Json(new {
+            success = false, code = "authenticator_recovery_required",
+            message = "Use password recovery on the updated website with your username or email and authenticator code."
+        }, statusCode: 410));
 
-            user.UserSecurity ??= new UserSecurity { UserId = user.Id };
-            user.UserSecurity.PasswordResetToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(4));
-            user.UserSecurity.PasswordResetTokenExpiry = DateTime.Now.AddMinutes(300);
-
-            await db.SaveChangesAsync();
-
-            return TypedResults.Ok("Password reset token sent.");
-        }
-
-
-        public static async Task<IResult> CustomerForgotPassword(
-          CompAuthApiDbContext db,
-          [FromBody] ForgotPasswordDto dto)
-        {
-            // 1) Look-up user
-            var user = await db.Users
-                               .Include(u => u.UserSecurity)
-                               .FirstOrDefaultAsync(u => u.Email == dto.Email);
-
-            if (user is null)
-                return TypedResults.NotFound(new { message = "User not found." });
-
-            // 2) Ensure UserSecurity row exists
-            user.UserSecurity ??= new UserSecurity { UserId = user.Id };
-
-            // 3) Generate reset token
-            user.UserSecurity.PasswordResetToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(4));
-            user.UserSecurity.PasswordResetTokenExpiry = DateTime.UtcNow.AddMinutes(300);
-            await db.SaveChangesAsync();
-
-            // 4) Build the e-mail body
-            var resetBody = $"""
-            Hi {user.Username},
-
-            You (or someone pretending to be you) requested a password reset.
-            Your reset code is: {user.UserSecurity.PasswordResetToken}
-
-            This code will expire in 30 minutes.
-
-            If you did not request this, please ignore this e-mail.
-
-            — CompaniesGateway
-            """;
-
-            // 5) Create the MimeMessage
-            var message = new MimeMessage();
-            message.From.Add(new MailboxAddress("Companies Gateway", "OTP.info@bcd.ly"));
-            message.To.Add(MailboxAddress.Parse(dto.Email));
-            message.Subject = "Your password reset code";
-            message.Date = DateTimeOffset.UtcNow;
-            message.MessageId = MimeUtils.GenerateMessageId("bcd.ly");
-            message.Body = new TextPart("plain") { Text = resetBody };
-
-            // 6) Hard-coded SMTP settings (MailKit)
-            const string smtpHost = "d303874.o.ess.barracudanetworks.com";
-            const int smtpPort = 25;
-            const bool useStartTls = true;
-            const string smtpUser = "comp.info@bcd.ly";
-            const string smtpPassword = "";  // <-- fill in if you have one
-
-            bool sent = false;
-            using var smtp = new SmtpClient { Timeout = 10_000 };
-
-            try
-            {
-                // Connect (with or without STARTTLS)
-                await smtp.ConnectAsync(
-                    smtpHost,
-                    smtpPort,
-                    useStartTls
-                      ? SecureSocketOptions.StartTls
-                      : SecureSocketOptions.None
-                );
-
-                // Authenticate only if we have credentials
-                if (!string.IsNullOrWhiteSpace(smtpPassword))
-                    await smtp.AuthenticateAsync(smtpUser, smtpPassword);
-
-                // Send the message
-                await smtp.SendAsync(message);
-                sent = true;
-            }
-            catch (Exception ex)
-            {
-                // Any failure before here means the message was not sent
-                return TypedResults.Ok(new
-                {
-                    message = "Failed to send reset e-mail.",
-                    detail = ex.Message
-                });
-            }
-            finally
-            {
-                // Always attempt to disconnect, but swallow any errors here
-                try
-                {
-                    await smtp.DisconnectAsync(true);
-                }
-                catch { }
-            }
-
-            // Return success if SendAsync succeeded
-            return sent
-                ? TypedResults.Ok(new { message = "Reset code sent to your e-mail." })
-                : TypedResults.Ok(new { message = "Unknown error sending reset e-mail." });
-        }
-        /// <summary> Reset Password </summary>
-        public static async Task<IResult> ResetPassword(CompAuthApiDbContext db, ResetPasswordDto dto)
-        {
-            var user = await db.Users.Include(u => u.UserSecurity)
-                .FirstOrDefaultAsync(u => u.UserSecurity.PasswordResetToken == dto.PasswordToken &&
-                                          u.UserSecurity.PasswordResetTokenExpiry > DateTime.Now);
-
-            if (user == null) return TypedResults.BadRequest("Invalid or expired token.");
-
-            // Hash the new password
-            user.Password = BCrypt.Net.BCrypt.HashPassword(dto.Password);
-
-            // Clear the reset token
-            user.UserSecurity.PasswordResetToken = null;
-            user.UserSecurity.PasswordResetTokenExpiry = null;
-
-            await db.SaveChangesAsync();
-
-            return TypedResults.Ok("Password reset successful.");
-        }
+        public static Task<IResult> ForgotPassword(CompAuthApiDbContext db, ForgotPasswordDto dto) => LegacyRecoveryDisabled();
+        public static Task<IResult> CustomerForgotPassword(CompAuthApiDbContext db, ForgotPasswordDto dto) => LegacyRecoveryDisabled();
+        public static Task<IResult> ResetPassword(CompAuthApiDbContext db, ResetPasswordDto dto) => LegacyRecoveryDisabled();
 
         public static async Task<IResult> Logout(CompAuthApiDbContext db, HttpContext httpContext)
         {
@@ -954,28 +809,6 @@ namespace CompAuthApi.Endpoints
                 SessionExpiresAt = session.ExpiresAt,
                 HeartbeatIntervalMinutes
             });
-        }
-        private static bool VerifyOtp(string otp, string secretKey)
-        {
-            try
-            {
-                byte[] keyBytes = Base32Encoding.ToBytes(secretKey);
-
-                var totp = new Totp(keyBytes, step: 30, totpSize: 6, mode: OtpHashMode.Sha1);
-
-                bool isValid = totp.VerifyTotp(otp, out _, new VerificationWindow(previous: 1, future: 1));
-
-                Console.WriteLine($"[DEBUG] OTP Received: {otp}");
-                Console.WriteLine($"[DEBUG] Secret Key Used: {secretKey}");
-                Console.WriteLine($"[DEBUG] OTP Valid: {isValid}");
-
-                return isValid;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ERROR] OTP Verification Failed: {ex.Message}");
-                return false;
-            }
         }
 
         private static async Task<bool> VerifyRecaptcha(string secretKey, string recaptchaToken)

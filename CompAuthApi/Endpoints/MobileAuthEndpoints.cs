@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
 using CompAuthApi.Abstractions;
 using CompAuthApi.Core.Abstractions;
@@ -174,10 +174,7 @@ public sealed class MobileAuthEndpoints : IEndpoints
             }
         }
 
-        return await AuthEndpoints.EnableTwoFactorAuthentication(
-            db,
-            qrCodeRepository,
-            new EnableTwoFactorDto { Login = request.Login.Trim() });
+        return await AuthEndpoints.EnableAuthorizedMobileTwoFactor(db, request.Login.Trim());
     }
 
     internal static async Task<IResult> VerifyTwoFactor(
