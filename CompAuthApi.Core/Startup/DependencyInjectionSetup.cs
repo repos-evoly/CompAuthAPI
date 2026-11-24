@@ -7,6 +7,7 @@ using CompAuthApi.Core.Dtos;
 using CompAuthApi.Validators;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -47,6 +48,12 @@ namespace CompAuthApi.Core.Startup
         .AddOptions<DeviceSecurityOptions>()
         .Bind(builder.Configuration.GetSection(DeviceSecurityOptions.SectionName));
       builder.Services.AddScoped<IDeviceSecurityService, DeviceSecurityService>();
+      var recoveryProtection = builder.Services.AddDataProtection().SetApplicationName("CompAuthApi");
+      var recoveryKeysPath = builder.Configuration["AuthenticatorReenrollment:DataProtectionKeysPath"];
+      if (!string.IsNullOrWhiteSpace(recoveryKeysPath))
+        recoveryProtection.PersistKeysToFileSystem(new DirectoryInfo(recoveryKeysPath));
+      builder.Services.AddHttpClient("AuthenticatorReenrollmentBank", client => client.Timeout = TimeSpan.FromSeconds(8))
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
       builder.Services.AddHttpContextAccessor();
       builder.Services.AddScoped<IDeviceAdministrationService, DeviceAdministrationService>();
       builder.Services.AddScoped<IDeviceAttestationValidator, DeviceAttestationValidator>();
@@ -296,6 +303,13 @@ namespace CompAuthApi.Core.Startup
           limiter.AutoReplenishment = true;
         });
         options.AddFixedWindowLimiter("mobile-auth-standard", limiter =>
+        {
+          limiter.PermitLimit = 240;
+          limiter.Window = TimeSpan.FromMinutes(1);
+          limiter.QueueLimit = 0;
+          limiter.AutoReplenishment = true;
+        });
+        options.AddFixedWindowLimiter("web-authenticator-recovery", limiter =>
         {
           limiter.PermitLimit = 240;
           limiter.Window = TimeSpan.FromMinutes(1);

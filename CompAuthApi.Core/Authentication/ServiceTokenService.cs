@@ -16,12 +16,12 @@ public interface IServiceTokenService
 
 public interface IMobileAuthChallengeService
 {
-    MobileAuthChallenge Issue(string login, string deviceId, string purpose);
+    MobileAuthChallenge Issue(string login, string deviceId, string purpose, int? authUserId = null);
     bool Validate(
         string token,
         string login,
         string deviceId,
-        string expectedPurpose);
+        string expectedPurpose, int? expectedAuthUserId = null);
 }
 
 public sealed class ServiceTokenService : IServiceTokenService, IMobileAuthChallengeService
@@ -128,14 +128,14 @@ public sealed class ServiceTokenService : IServiceTokenService, IMobileAuthChall
         return principal;
     }
 
-    public MobileAuthChallenge Issue(string login, string deviceId, string purpose)
+    public MobileAuthChallenge Issue(string login, string deviceId, string purpose, int? authUserId = null)
     {
         var options = _options.CurrentValue;
         EnsureIssuerConfiguration(options, requirePrivateKey: true);
         var lifetime = Math.Clamp(options.ChallengeLifetimeSeconds, 60, 600);
         var now = _timeProvider.GetUtcNow();
         var expiresAt = now.AddSeconds(lifetime);
-        var claims = new[]
+        var claims = new List<Claim>
         {
             new Claim("token_type", ServiceAuthenticationDefaults.ChallengeTokenType),
             new Claim("login_hash", HashLogin(login)),
@@ -144,6 +144,8 @@ public sealed class ServiceTokenService : IServiceTokenService, IMobileAuthChall
             new Claim("environment", options.Environment),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N"))
         };
+        if (authUserId.HasValue)
+            claims.Add(new Claim("auth_user_id", authUserId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
 
         return new MobileAuthChallenge(
             CreateToken(
@@ -159,7 +161,7 @@ public sealed class ServiceTokenService : IServiceTokenService, IMobileAuthChall
         string token,
         string login,
         string deviceId,
-        string expectedPurpose)
+        string expectedPurpose, int? expectedAuthUserId = null)
     {
         try
         {
@@ -170,7 +172,10 @@ public sealed class ServiceTokenService : IServiceTokenService, IMobileAuthChall
                 options,
                 ServiceAuthenticationDefaults.ChallengeAudience);
 
-            return string.Equals(
+            return (!expectedAuthUserId.HasValue ||
+                    (int.TryParse(principal.FindFirst("auth_user_id")?.Value, out var authUserId) &&
+                     authUserId == expectedAuthUserId.Value)) &&
+                   string.Equals(
                        principal.FindFirst("token_type")?.Value,
                        ServiceAuthenticationDefaults.ChallengeTokenType,
                        StringComparison.Ordinal) &&

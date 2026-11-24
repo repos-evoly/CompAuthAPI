@@ -15,7 +15,7 @@ public sealed record SetupSecret(string Email, string Secret);
 
 // Short-lived grants are stored hashed. All decisions and consumption run in a
 // serializable transaction; retries always use a fresh context/change tracker.
-public sealed class AuthenticatorRecoveryService
+public sealed partial class AuthenticatorRecoveryService
 {
     public const string ResetPurpose = "password-reset";
     public const string SetupPurpose = "authenticator-setup";
@@ -157,14 +157,19 @@ public sealed class AuthenticatorRecoveryService
             user.UserSecurity.LastLock = null;
             user.UserSecurity.LoginAttemptCount = 0;
         }
-        var sessions = await db.UserSessions.Where(s => s.UserId == user.Id && s.IsActive).ToListAsync();
-        foreach (var session in sessions) { session.IsActive = false; session.RefreshToken = null; session.LoggedOutAt = clock.GetUtcNow(); }
-        var devices = await db.DeviceSessions.Where(s => s.AuthUserId == user.Id && s.RevokedAt == null).ToListAsync();
-        foreach (var session in devices) session.RevokedAt = clock.GetUtcNow();
-        var grants = await db.AuthenticatorActionGrants.Where(g => g.UserId == user.Id && g.ConsumedUtc == null).ToListAsync();
-        foreach (var item in grants) item.ConsumedUtc = Now;
+        await RevokeUserSessionsAsync(db, user.Id);
         return new RecoveryResult(true, Status: 200, UserId: user.Id);
     });
+
+    private async Task RevokeUserSessionsAsync(CompAuthApiDbContext db, int userId)
+    {
+        var sessions = await db.UserSessions.Where(s => s.UserId == userId && s.IsActive).ToListAsync();
+        foreach (var session in sessions) { session.IsActive = false; session.RefreshToken = null; session.LoggedOutAt = clock.GetUtcNow(); }
+        var devices = await db.DeviceSessions.Where(s => s.AuthUserId == userId && s.RevokedAt == null).ToListAsync();
+        foreach (var session in devices) session.RevokedAt = clock.GetUtcNow();
+        var grants = await db.AuthenticatorActionGrants.Where(g => g.UserId == userId && g.ConsumedUtc == null).ToListAsync();
+        foreach (var item in grants) item.ConsumedUtc = Now;
+    }
 
     public Task<string?> IssueSetupAsync(int userId) => Transaction(async db =>
     {

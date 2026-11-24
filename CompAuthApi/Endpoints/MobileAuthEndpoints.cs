@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CompAuthApi.Endpoints;
 
-public sealed class MobileAuthEndpoints : IEndpoints
+public sealed partial class MobileAuthEndpoints : IEndpoints
 {
     private const string DeviceCookieName = "authDeviceId";
     private const string EnablePurpose = "enable_2fa";
@@ -35,6 +35,7 @@ public sealed class MobileAuthEndpoints : IEndpoints
             .RequireRateLimiting("mobile-auth-sensitive");
         mobile.MapPost("/2fa/verify-initial", VerifyInitialTwoFactor)
             .RequireRateLimiting("mobile-auth-sensitive");
+        MapReenrollment(mobile);
         mobile.MapPost("/forgot-password", ForgotPassword)
             .RequireRateLimiting("mobile-auth-sensitive");
         mobile.MapPost("/reset-password", ResetPassword)
@@ -118,7 +119,8 @@ public sealed class MobileAuthEndpoints : IEndpoints
             var challenge = challengeService.Issue(
                 request.Login,
                 request.DeviceId,
-                purpose);
+                purpose,
+                purpose == VerifyPurpose ? response["recoveryUserId"]?.GetValue<int>() : null);
             response["challengeToken"] = challenge.Token;
             response["challengeExpiresIn"] = challenge.ExpiresIn;
         }

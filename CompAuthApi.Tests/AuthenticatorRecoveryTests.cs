@@ -4,6 +4,7 @@ using CompAuthApi.Data.Context;
 using CompAuthApi.Data.Models;
 using CompAuthApi.Data.Migrations;
 using CompAuthApi.Endpoints;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -48,6 +49,89 @@ public sealed class AuthenticatorRecoveryTests
         user.UserSecurity.PasswordResetTokenExpiry = DateTimeOffset.UtcNow.AddHours(1);
         await f.Db.SaveChangesAsync();
         return f;
+    }
+
+    [Fact]
+    public async Task ApprovedReenrollmentPersistsAndRotatesOnlyAfterCodeOnRequestingDevice()
+    {
+        await using var f = await Prepare();
+        var clock = new Clock();
+        var service = new AuthenticatorRecoveryService(f.Db, clock);
+        var protector = new EphemeralDataProtectionProvider().CreateProtector("recovery-test");
+        const string key = "password-issued-challenge";
+        const string device = "requesting-device";
+        f.Db.UserSessions.Add(new UserSession { UserId = 42, SessionId = "old-session", DeviceId = device, IsActive = true });
+        var mobileDevice = new MobileDevice
+        {
+            Id = Guid.NewGuid(), TargetAuthUserId = 42, InstallationId = device, Platform = "ios",
+            PublicKeyPem = "public-key", Status = DeviceRegistrationStatus.Approved
+        };
+        f.Db.MobileDevices.Add(mobileDevice);
+        f.Db.DeviceSessions.Add(new DeviceSession
+        {
+            Id = Guid.NewGuid(), AuthUserId = 42, MobileDeviceId = mobileDevice.Id,
+            CompAuthSessionId = "old-session", TokenHash = "old-mobile-token"
+        });
+        await f.Db.SaveChangesAsync();
+
+        Assert.Equal(409, (await service.RequestReenrollmentAsync(42, "user42", device, key, "older-key")).HttpStatus);
+        var requested = await service.RequestReenrollmentAsync(42, "user42", device, key, key);
+        Assert.Equal("requested", requested.Status);
+        Assert.True((await service.RequestReenrollmentAsync(42, "user42@example.test", device, "new-challenge", key)).AlreadyRequested);
+        var differentDevice = await service.RequestReenrollmentAsync(42, "user42", "other-device", "its-challenge", "its-challenge");
+        Assert.True(differentDevice.AlreadyRequested);
+        Assert.Null(differentDevice.RequestId);
+        var stored = await f.Db.AuthenticatorReenrollments.AsNoTracking().SingleAsync();
+        Assert.Equal(AuthenticatorRecoveryService.Hash(key), stored.RequestKeyHash);
+        Assert.Equal(403, (await service.PrepareReenrollmentAsync(42, "user42", device, key, protector)).HttpStatus);
+
+        clock.Now = clock.Now.AddDays(30);
+        var approved = await service.SetReenrollmentDecisionAsync(42, requested.RequestId!.Value, 10, approve: true);
+        Assert.Equal("approved", approved.Status);
+        clock.Now = clock.Now.AddDays(30);
+        Assert.False((await service.ReadReenrollmentAsync(42, "user42", "other-device", key)).CanContinue);
+        Assert.False((await service.ReadReenrollmentAsync(42, "user42", device, "wrong-key")).CanContinue);
+        Assert.True((await service.ReadReenrollmentAsync(42, "user42", device, key)).CanContinue);
+        Assert.Equal(403, (await service.PrepareReenrollmentAsync(42, "user42", "other-device", key, protector)).HttpStatus);
+        var setup = await service.PrepareReenrollmentAsync(42, "user42", device, key, protector);
+        Assert.NotNull(setup.Setup);
+        Assert.NotEqual(Secret, setup.Setup.Secret);
+        Assert.Equal(setup.Setup.Secret, (await service.PrepareReenrollmentAsync(42, "user42", device, key, protector)).Setup?.Secret);
+        Assert.Equal(Secret, (await f.Db.UserSecurities.AsNoTracking().SingleAsync(s => s.UserId == 42)).TwoFactorSecretKey);
+        Assert.Equal("invalid_recovery_otp", (await service.CompleteReenrollmentAsync(42, "user42", device, key, "invalid", protector)).Code);
+
+        var newTotp = new Totp(Base32Encoding.ToBytes(setup.Setup.Secret));
+        var code = newTotp.ComputeTotp(clock.Now.UtcDateTime);
+        Assert.Equal("completed", (await service.CompleteReenrollmentAsync(42, "user42", device, key, code, protector)).Status);
+        Assert.Equal("completed", (await service.CompleteReenrollmentAsync(42, "user42", device, key, code, protector)).Status);
+        Assert.Equal(403, (await service.CompleteReenrollmentAsync(42, "user42", "other-device", key, code, protector)).HttpStatus);
+        Assert.False(await service.ConsumeLoginCodeAsync(42, code, false));
+        clock.Now = clock.Now.AddMinutes(2);
+        Assert.True(await service.ConsumeLoginCodeAsync(42, newTotp.ComputeTotp(clock.Now.UtcDateTime), false));
+        var security = await f.Db.UserSecurities.AsNoTracking().SingleAsync(s => s.UserId == 42);
+        Assert.Equal(setup.Setup.Secret, security.TwoFactorSecretKey);
+        Assert.True(security.IsTwoFactorEnabled);
+        Assert.False((await f.Db.UserSessions.AsNoTracking().SingleAsync()).IsActive);
+        Assert.NotNull((await f.Db.DeviceSessions.AsNoTracking().SingleAsync()).RevokedAt);
+        stored = await f.Db.AuthenticatorReenrollments.AsNoTracking().SingleAsync();
+        Assert.Equal(10, stored.ApprovedByAuthUserId);
+        Assert.Null(stored.ProtectedSetupSecret);
+        Assert.Equal("completed", (await service.SetReenrollmentDecisionAsync(42, stored.Id, 11, approve: false)).Status);
+    }
+
+    [Fact]
+    public async Task CancelledRecoveryAllowsNewRequestFromAnotherDevice()
+    {
+        await using var f = await Prepare();
+        var service = new AuthenticatorRecoveryService(f.Db, new Clock());
+        var requested = await service.RequestReenrollmentAsync(42, "user42", "original", "key-1", "key-1");
+        await service.SetReenrollmentDecisionAsync(42, requested.RequestId!.Value, 10, approve: true);
+        Assert.Equal("cancelled", (await service.SetReenrollmentDecisionAsync(42, requested.RequestId.Value, 11, approve: false)).Status);
+        Assert.False((await service.ReadReenrollmentAsync(42, "user42", "original", "key-1")).CanContinue);
+        var replacement = await service.RequestReenrollmentAsync(42, "user42", "replacement", "key-2", "key-2");
+        Assert.Equal("requested", replacement.Status);
+        Assert.NotEqual(requested.RequestId, replacement.RequestId);
+        Assert.False(replacement.AlreadyRequested);
     }
 
     [Theory]

@@ -3,6 +3,7 @@ using System.Text;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.Http;
@@ -51,6 +52,11 @@ namespace CompAuthApi.Endpoints
             auth.MapPost("/verify-initial-2fa", VerifyInitialTwoFactorSetup);
             auth.MapPost("/logout", Logout);
             auth.MapPost("/session/heartbeat", Heartbeat);
+            auth.MapGet("/session/validate", (HttpContext context) =>
+            {
+                context.Response.Headers.CacheControl = "no-store";
+                return Results.NoContent();
+            }).RequireAuthorization("requireAuthUser");
         }
 
         /// <summary> User Registration </summary>
@@ -94,7 +100,8 @@ namespace CompAuthApi.Endpoints
             IConfiguration config,
             IGeoFenceService geoFenceService,
             HttpContext httpContext,
-            LoginDto dto)
+            LoginDto dto,
+            IDataProtectionProvider? protection = null)
         {
             var now = DateTimeOffset.UtcNow;
             var settings = await db.Settings.FirstOrDefaultAsync();
@@ -182,7 +189,16 @@ namespace CompAuthApi.Endpoints
                     return TypedResults.Ok(new { RequiresTwoFactorEnable = true, DeviceId = requestedDeviceId,
                         SetupToken = await new AuthenticatorRecoveryService(db).IssueSetupAsync(user.Id) });
 
-                return TypedResults.Ok(new { RequiresTwoFactor = true, DeviceId = requestedDeviceId });
+                var browserKey = httpContext.Request.Headers[WebAuthenticatorReenrollmentEndpoints.BrowserKeyHeader].ToString();
+                var recoveryProof = protection is not null && WebAuthenticatorReenrollmentEndpoints.IsBrowserKey(browserKey)
+                    ? WebAuthenticatorReenrollmentEndpoints.IssueProof(protection, user.Id, dto.Login, requestedDeviceId, browserKey)
+                    : null;
+                if (recoveryProof is not null) httpContext.Response.Headers.CacheControl = "no-store";
+                return TypedResults.Ok(new
+                {
+                    RequiresTwoFactor = true, DeviceId = requestedDeviceId, RecoveryUserId = user.Id,
+                    WebRecoveryProof = recoveryProof
+                });
             }
 
             var geoFenceEvaluation = await EvaluateGeoFenceAsync(db, geoFenceService, user, httpContext, now);
@@ -204,7 +220,7 @@ namespace CompAuthApi.Endpoints
         internal static async Task<IResult> EnableAuthorizedMobileTwoFactor(CompAuthApiDbContext db, string login) =>
             SetupResponse(await new AuthenticatorRecoveryService(db).PrepareSetupAsync(login, null, verifiedMobile: true));
 
-        private static IResult SetupResponse(SetupSecret? setup)
+        internal static IResult SetupResponse(SetupSecret? setup)
         {
             if (setup == null) return Results.Json(new { success = false,
                 message = "Authenticator setup is unavailable. Sign in again or contact support to reset enrollment." }, statusCode: 400);
@@ -256,7 +272,6 @@ namespace CompAuthApi.Endpoints
             user.UserSecurity.IsTwoFactorEnabled = true;
 
             var response = await CreateSessionAndTokenResponse(db, config, geoFenceService, geoFenceEvaluation, httpContext, user, requestedDeviceId, now);
-
             return TypedResults.Ok(new
             {
                 Message = "2FA setup successfully verified and enabled.",
@@ -289,7 +304,8 @@ namespace CompAuthApi.Endpoints
             if (user == null || user.UserSecurity?.IsTwoFactorEnabled != true)
                 return TypedResults.BadRequest("2FA is not enabled for this user.");
 
-            if (string.IsNullOrEmpty(user.UserSecurity.TwoFactorSecretKey))
+            var verifiedSecret = user.UserSecurity.TwoFactorSecretKey;
+            if (string.IsNullOrEmpty(verifiedSecret))
                 return TypedResults.BadRequest("2FA secret key is missing.");
 
             bool isValidOtp = await new AuthenticatorRecoveryService(db).ConsumeLoginCodeAsync(user.Id, dto.Token, initial: false);
@@ -308,6 +324,19 @@ namespace CompAuthApi.Endpoints
                 return TypedResults.Ok(geoFenceEvaluation.Error);
 
             var response = await CreateSessionAndTokenResponse(db, config, geoFenceService, geoFenceEvaluation, httpContext, user, requestedDeviceId, now);
+
+            // Re-enrollment can finish while a login using the old authenticator is in flight.
+            var currentSecret = await db.UserSecurities.Where(security => security.UserId == user.Id)
+                .Select(security => security.TwoFactorSecretKey).SingleOrDefaultAsync();
+            if (!string.Equals(currentSecret, verifiedSecret, StringComparison.Ordinal))
+            {
+                var session = await db.UserSessions.SingleAsync(item => item.SessionId == response.SessionId);
+                session.IsActive = false;
+                session.RefreshToken = null;
+                session.LoggedOutAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync();
+                return TypedResults.BadRequest("Your authenticator changed. Please sign in again.");
+            }
 
             return TypedResults.Ok(new
             {
@@ -605,7 +634,7 @@ namespace CompAuthApi.Endpoints
             return IsSafeToken(cookieSession) ? cookieSession : null;
         }
 
-        private static bool IsSafeToken(string? value)
+        internal static bool IsSafeToken(string? value)
         {
             return !string.IsNullOrWhiteSpace(value) &&
                    value.Length <= 64 &&

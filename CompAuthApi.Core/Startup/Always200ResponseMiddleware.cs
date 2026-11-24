@@ -18,6 +18,9 @@ namespace CompAuthApi.Core.Startup
       "/api/settings/mobile-app-updates",
       "/api/settings/mobile-app-maintenance",
       "/api/mobile-auth",
+      "/api/admin/authenticator-recovery",
+      "/api/auth/2fa-recovery",
+      "/api/auth/session/validate",
       "/api/auth/password-recovery"
     };
 

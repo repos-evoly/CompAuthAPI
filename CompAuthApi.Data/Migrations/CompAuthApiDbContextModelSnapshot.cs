@@ -61,6 +61,68 @@ namespace CompAuthApi.Data.Migrations
                     b.ToTable("AuthenticatorActionGrants");
                 });
 
+            modelBuilder.Entity("CompAuthApi.Data.Models.AuthenticatorReenrollment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int?>("ApprovedByAuthUserId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int?>("CancelledByAuthUserId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset?>("ClosedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("DeviceId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("PasswordFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("PreviousSecretFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("ProtectedSetupSecret")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("RequestKeyHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasFilter("[ClosedAt] IS NULL");
+
+                    b.ToTable("AuthenticatorReenrollments");
+                });
+
             modelBuilder.Entity("CompAuthApi.Data.Models.AuthenticatorUsedStep", b =>
                 {
                     b.Property<int>("UserId")
@@ -966,6 +1028,17 @@ namespace CompAuthApi.Data.Migrations
                 });
 
             modelBuilder.Entity("CompAuthApi.Data.Models.AuthenticatorActionGrant", b =>
+                {
+                    b.HasOne("CompAuthApi.Data.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("CompAuthApi.Data.Models.AuthenticatorReenrollment", b =>
                 {
                     b.HasOne("CompAuthApi.Data.Models.User", "User")
                         .WithMany()

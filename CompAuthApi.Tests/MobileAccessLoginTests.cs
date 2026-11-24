@@ -6,6 +6,7 @@ using CompAuthApi.Core.Authentication;
 using CompAuthApi.Core.Dtos;
 using CompAuthApi.Data.Models;
 using CompAuthApi.Endpoints;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -77,6 +78,63 @@ public sealed class MobileAccessLoginTests
             Assert.Empty(await f.Db.DeviceSessions.ToListAsync());
         }
         else Assert.True(Json(result).TryGetProperty("deviceSessionToken", out _));
+    }
+
+    [Fact]
+    public async Task WebRecoveryRequiresPasswordAndOriginalBrowserAndReusesAdminApproval()
+    {
+        await using var f = await Prepare(false);
+        (await f.Db.Settings.SingleAsync()).IsTwoFactorAuthEnabled = true;
+        var user = await f.Db.Users.Include(item => item.UserSecurity).SingleAsync(item => item.Id == 42);
+        user.UserSecurity.IsTwoFactorEnabled = true;
+        user.UserSecurity.TwoFactorSecretKey = Secret;
+        await f.Db.SaveChangesAsync();
+        var protection = new EphemeralDataProtectionProvider();
+        var key = new string('a', 64);
+        var browser = Browser(key);
+        var failed = await AuthEndpoints.Login(f.Db, Config, new Geo(), browser,
+            new LoginDto { Login = "user42", Password = "wrong-password" }, protection);
+        Assert.False(Json(failed).TryGetProperty("webRecoveryProof", out _));
+        var login = Json(await AuthEndpoints.Login(f.Db, Config, new Geo(), browser,
+            new LoginDto { Login = "user42", Password = "correct-password" }, protection));
+        var proof = login.GetProperty("webRecoveryProof").GetString();
+        Assert.NotNull(proof);
+        Assert.False(login.TryGetProperty("accessToken", out _));
+        var beforeRequest = await WebAuthenticatorReenrollmentEndpoints.HandleAsync("request", new(null, null), browser, f.Db, protection);
+        Assert.Equal(401, ((IStatusCodeHttpResult)beforeRequest).StatusCode);
+        var anotherBrowser = await WebAuthenticatorReenrollmentEndpoints.HandleAsync("request", new(proof, null), Browser(new string('b', 64)), f.Db, protection);
+        Assert.Equal(401, ((IStatusCodeHttpResult)anotherBrowser).StatusCode);
+        Assert.Empty(await f.Db.AuthenticatorReenrollments.ToListAsync());
+
+        var request = Json(await WebAuthenticatorReenrollmentEndpoints.HandleAsync("request", new(proof, null), browser, f.Db, protection));
+        Assert.Equal("requested", request.GetProperty("status").GetString());
+        var duplicate = Json(await WebAuthenticatorReenrollmentEndpoints.HandleAsync("request", new(proof, null), browser, f.Db, protection));
+        Assert.True(duplicate.GetProperty("alreadyRequested").GetBoolean());
+        var notApproved = await WebAuthenticatorReenrollmentEndpoints.HandleAsync("setup", new(proof, null), browser, f.Db, protection);
+        Assert.Equal(403, ((IStatusCodeHttpResult)notApproved).StatusCode);
+
+        var service = new AuthenticatorRecoveryService(f.Db);
+        await service.SetReenrollmentDecisionAsync(42, request.GetProperty("requestId").GetGuid(), 1, approve: true);
+        var nextLogin = Json(await AuthEndpoints.Login(f.Db, Config, new Geo(), browser,
+            new LoginDto { Login = "user42", Password = "correct-password" }, protection));
+        var newProof = nextLogin.GetProperty("webRecoveryProof").GetString();
+        Assert.NotEqual(proof, newProof);
+        var setup = Json(await WebAuthenticatorReenrollmentEndpoints.HandleAsync("setup", new(newProof, null), browser, f.Db, protection));
+        Assert.StartsWith("data:image/png;base64,", setup.GetProperty("qrCodeImageBase64").GetString());
+        var secret = setup.GetProperty("secretKey").GetString()!;
+        var code = new Totp(Base32Encoding.ToBytes(secret)).ComputeTotp();
+        var completed = Json(await WebAuthenticatorReenrollmentEndpoints.HandleAsync("complete", new(newProof, code), browser, f.Db, protection));
+        Assert.Equal("completed", completed.GetProperty("status").GetString());
+        Assert.False(completed.TryGetProperty("accessToken", out _));
+        Assert.Equal(secret, (await f.Db.UserSecurities.AsNoTracking().SingleAsync(item => item.UserId == 42)).TwoFactorSecretKey);
+
+        static DefaultHttpContext Browser(string browserKey)
+        {
+            var context = new DefaultHttpContext();
+            context.Request.Headers.Cookie = "authDeviceId=browser-1";
+            context.Request.Headers[WebAuthenticatorReenrollmentEndpoints.BrowserKeyHeader] = browserKey;
+            return context;
+        }
     }
 
     [Fact]

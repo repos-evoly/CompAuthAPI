@@ -16,6 +16,7 @@ namespace CompAuthApi.Data.Context
         public DbSet<User> Users => Set<User>();
         public DbSet<AuthenticatorActionGrant> AuthenticatorActionGrants => Set<AuthenticatorActionGrant>();
         public DbSet<AuthenticatorUsedStep> AuthenticatorUsedSteps => Set<AuthenticatorUsedStep>();
+        public DbSet<AuthenticatorReenrollment> AuthenticatorReenrollments => Set<AuthenticatorReenrollment>();
         public DbSet<PasswordRecoveryThrottle> PasswordRecoveryThrottles => Set<PasswordRecoveryThrottle>();
         public DbSet<Role> Roles => Set<Role>();
 
@@ -46,6 +47,9 @@ namespace CompAuthApi.Data.Context
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
+
+            builder.Entity<AuthenticatorReenrollment>().HasIndex(request => request.UserId)
+                .IsUnique().HasFilter("[ClosedAt] IS NULL");
 
             builder.Entity<MobileAppMaintenancePolicy>().ToTable("MobileAppMaintenancePolicy",
                 table => table.HasCheckConstraint("CK_MobileAppMaintenancePolicy_Singleton", "[Id] = 1"));
